@@ -1,0 +1,19 @@
+mcp>=1.0.0
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+httpx>=0.25.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+aiosmtplib>=2.0.0
+email-validator>=2.1.0
+python-dotenv>=1.0.0
+rich>=13.0.0
+python-multipart>=0.0.6
+
+# LangChain 客户端（langchain_client.py）
+# langchain-ollama 提供实现 bind_tools 的 ChatOllama；
+# langchain-community 里的同名类没有实现该方法，会导致 create_agent 报 NotImplementedError。
+langchain>=1.0.0
+langchain-core>=1.0.0
+langchain-ollama>=1.0.0
+langchain-mcp-adapters>=0.1.0
