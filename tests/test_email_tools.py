@@ -314,6 +314,115 @@ def test_normalize_stem_keeps_short_names_intact():
 
 
 # ---------------------------------------------------------------------------
+# 附件大小限制
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def tiny_limits(monkeypatch):
+    """把上限压到几十字节，避免测试里造大文件。"""
+    import email_tools
+
+    monkeypatch.setattr(email_tools.settings, "max_attachment_bytes", 64)
+    monkeypatch.setattr(email_tools.settings, "max_total_attachment_bytes", 100)
+    return 64, 100
+
+
+def test_size_check_passes_for_small_files(tiny_limits, tmp_path):
+    from email_tools import check_attachment_sizes
+
+    f = tmp_path / "small.txt"
+    f.write_bytes(b"x" * 10)
+    assert check_attachment_sizes([str(f)]) == []
+
+
+def test_size_check_detects_oversized_single_file(tiny_limits, tmp_path):
+    from email_tools import check_attachment_sizes
+
+    f = tmp_path / "big.bin"
+    f.write_bytes(b"x" * 100)  # 超过 64
+    oversize = check_attachment_sizes([str(f)])
+
+    singles = [o for o in oversize if o["kind"] == "single"]
+    assert len(singles) == 1
+    assert singles[0]["name"] == "big.bin"
+    assert singles[0]["size"] == 100
+
+
+def test_size_check_detects_oversized_total(tiny_limits, tmp_path):
+    """每件都不超限，但加起来超限——必须单独报告。"""
+    from email_tools import check_attachment_sizes
+
+    paths = []
+    for i in range(3):
+        p = tmp_path / ("part%d.bin" % i)
+        p.write_bytes(b"y" * 40)  # 40 < 64，但 3×40=120 > 100
+        paths.append(str(p))
+
+    oversize = check_attachment_sizes(paths)
+    kinds = [o["kind"] for o in oversize]
+    assert "total" in kinds
+    assert "single" not in kinds, "单件都没超，不应报单件超限"
+
+
+def test_size_check_ignores_unreadable_paths(tiny_limits, tmp_path):
+    """读不到大小的路径交由「文件不存在」逻辑处理，不在这里报错。"""
+    from email_tools import check_attachment_sizes
+
+    assert check_attachment_sizes([str(tmp_path / "nope.bin")]) == []
+
+
+def test_oversize_send_is_aborted(tools, fake_smtp, tiny_limits, tmp_path):
+    """
+    回归测试：附件超限必须在发送前中止。
+
+    否则会先耗一次 SMTP 往返、再收到一个难懂的英文错误，
+    用户不知道原因是「附件太大」。
+    """
+    f = tmp_path / "big.bin"
+    f.write_bytes(b"x" * 200)
+
+    result = tools.sender.send_email_sync(
+        "a@b.com", "s", "b", attachments=[str(f)]
+    )
+
+    assert result["success"] is False
+    assert result["reason"] == "attachment_too_large"
+    assert "超过大小限制" in result["message"]
+    assert result["oversize_attachments"]
+    assert fake_smtp.last_instance is None, "不应建立 SMTP 连接"
+
+
+def test_oversize_message_names_the_file_and_bytes(tiny_limits, tmp_path):
+    """错误文案要能看出是哪个文件、超了多少。"""
+    from email_tools import check_attachment_sizes, describe_oversize
+
+    f = tmp_path / "报表.xlsx"
+    f.write_bytes(b"x" * 200)
+    text = describe_oversize(check_attachment_sizes([str(f)]))
+
+    assert "报表.xlsx" in text
+    assert "200" in text, "应给出精确字节数"
+    assert "建议" in text
+
+
+def test_size_limit_allows_file_exactly_at_limit(tiny_limits, tmp_path):
+    """刚好等于上限应放行（判断用的是 > 而不是 >=）。"""
+    from email_tools import check_attachment_sizes
+
+    f = tmp_path / "exact.bin"
+    f.write_bytes(b"x" * 64)
+    assert [o for o in check_attachment_sizes([str(f)]) if o["kind"] == "single"] == []
+
+
+def test_format_size_units():
+    from email_tools import _format_size
+
+    assert _format_size(500) == "500.0 B"
+    assert _format_size(2048) == "2.0 KB"
+    assert _format_size(3 * 1024 * 1024) == "3.0 MB"
+
+
+# ---------------------------------------------------------------------------
 # QQ 邮箱非标准响应
 # ---------------------------------------------------------------------------
 

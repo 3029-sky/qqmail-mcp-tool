@@ -75,6 +75,15 @@ class Settings(BaseSettings):
     idempotency_ttl: float = 3600.0
     idempotency_inflight_timeout: float = 300.0
 
+    # 附件大小限制
+    #: 单个附件的上限（字节）。
+    #: QQ 邮箱单封邮件上限约 25MB；这里留出余量，且 Base64 编码后体积会膨胀约 1.37 倍。
+    #: 超限在发送前就拒绝，而不是等 SMTP 回一个难懂的英文错误。
+    max_attachment_bytes: int = 12 * 1024 * 1024
+
+    #: 全部附件合计的上限（字节）。
+    max_total_attachment_bytes: int = 16 * 1024 * 1024
+
     # 附件存储路径
     attachment_dir: Path = Path(__file__).parent / "attachments"
 

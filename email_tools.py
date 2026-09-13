@@ -235,6 +235,108 @@ def resolve_attachment_paths(paths: List[str]) -> tuple:
     return resolved, missing, substitutions
 
 
+class OversizedAttachmentError(ValueError):
+    """
+    附件超过大小限制。
+
+    在发送前就拦下来，而不是等 SMTP 返回一个难懂的英文错误——
+    否则用户只会看到「邮件发不出去」，却不知道原因是附件太大。
+    """
+
+    def __init__(self, message: str, oversize: List[Dict[str, Any]]):
+        self.oversize = oversize
+        super().__init__(message)
+
+
+def _format_size(num_bytes: float) -> str:
+    """把字节数格式化成便于阅读的形式。"""
+    size = float(num_bytes)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return "%.1f %s" % (size, unit)
+        size /= 1024
+    return "%.1f GB" % size
+
+
+def check_attachment_sizes(paths: List[str]) -> List[Dict[str, Any]]:
+    """
+    检查附件大小，返回超限项（空列表表示都合格）。
+
+    同时检查单件上限与合计上限，两者分开报告：
+      - 单件超限通常是选错了文件（例如误选整个数据库）
+      - 合计超限则是「每件都不大，但加起来太多」
+    分开说明更利于用户判断该怎么处理。
+
+    QQ 邮箱单封上限约 25MB，但 Base64 编码会让体积膨胀约 1.37 倍，
+    因此配置里的阈值刻意留了余量。
+    """
+    per_limit = settings.max_attachment_bytes
+    total_limit = settings.max_total_attachment_bytes
+
+    oversize: List[Dict[str, Any]] = []
+    sizes: List[tuple] = []
+
+    for raw in paths or []:
+        path = Path(raw)
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue  # 读不到大小就交给上层的「文件不存在」逻辑处理
+        sizes.append((str(path), size))
+        if size > per_limit:
+            oversize.append({
+                "path": str(path),
+                "name": path.name,
+                "size": size,
+                "size_text": _format_size(size),
+                "limit": per_limit,
+                "limit_text": _format_size(per_limit),
+                "kind": "single",
+            })
+
+    total = sum(s for _, s in sizes)
+    if total > total_limit:
+        oversize.append({
+            "path": "",
+            "name": "（合计）",
+            "size": total,
+            "size_text": _format_size(total),
+            "limit": total_limit,
+            "limit_text": _format_size(total_limit),
+            "kind": "total",
+        })
+
+    return oversize
+
+
+def describe_oversize(oversize: List[Dict[str, Any]]) -> str:
+    """
+    把超限项整理成可直接展示给用户的说明。
+
+    对超出单件上限的文件额外标出精确字节数：
+    格式化后可能显示成「12.0 MB（上限 12.0 MB）」而看不出到底超了多少，
+    带上字节数才能一眼判断差多少。
+    """
+    single = [o for o in oversize if o["kind"] == "single"]
+    total = [o for o in oversize if o["kind"] == "total"]
+
+    lines: List[str] = []
+    if single:
+        lines.append("以下附件过大，超出单件上限 %s：" % single[0]["limit_text"])
+        for o in single:
+            lines.append(
+                "  · %s（%s，即 %s 字节）" % (o["name"], o["size_text"], o["size"])
+            )
+    if total:
+        o = total[0]
+        lines.append(
+            "全部附件合计 %s，超出上限 %s。"
+            % (o["size_text"], o["limit_text"])
+        )
+    lines.append("建议：压缩后重发、拆成多封邮件，或改用网盘链接。")
+    return "\n".join(lines)
+
+
 def build_message(
     to_email: Union[str, List[str]],
     subject: str,
@@ -438,6 +540,23 @@ class QQMailSender:
                 )
             if substitutions:
                 logger.info("附件路径已按文件名主干修正: %s", substitutions)
+
+            # 大小检查放在路径解析之后：只对真实存在的文件称重。
+            # 提前拒绝比等 QQ 回一个 SMTP 错误更可读，也省掉一次无用的传输。
+            oversize = check_attachment_sizes(attachments)
+            if oversize:
+                detail = describe_oversize(oversize)
+                logger.error("附件超限，已中止发送: %s", detail.replace("\n", " "))
+                return finish(
+                    _result(
+                        False,
+                        "附件超过大小限制，邮件未发送。\n%s" % detail,
+                        to_email, subject, recipients,
+                        reason="attachment_too_large",
+                        oversize_attachments=oversize,
+                    ),
+                    keep_key=False,
+                )
 
         try:
             msg = build_message(to_email, subject, body, html_body, attachments, cc)

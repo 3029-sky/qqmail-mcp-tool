@@ -38,7 +38,7 @@
 | **SMTP 连接复用** | 专用工作线程独占连接，实测 5 封邮件仅建立 1 条 TLS 连接 |
 | **结构化日志** | 可选单行 JSON 输出，便于日志系统采集 |
 | **发送指标** | 成功率、延迟分位数、失败原因分布，经 `/metrics` 暴露 |
-| **零外部依赖的测试** | 替换 SMTP/IMAP 层与注入替身，199 个用例不联网、不碰真实邮箱、约 2 秒跑完 |
+| **零外部依赖的测试** | 替换 SMTP/IMAP 层与注入替身，249 个用例不联网、不碰真实邮箱、约 2 秒跑完 |
 
 ---
 
@@ -179,6 +179,8 @@ python ollama_mcp_client.py        # 原生 MCP 客户端（交互模式）
 | `JSON_LOGS` | | 未设置 | 设为 `1`/`true`/`yes` 时日志输出为单行 JSON |
 | `EMAIL_CONFIRM_DELIVERY` | | `false` | 是否用 IMAP 回读确认发送（见[发送确认](#发送确认imap-回读)） |
 | `SEND_MAX_ATTEMPTS` | | `3` | 发送总尝试次数（含首次）；`1` 表示不重试 |
+| `MAX_ATTACHMENT_BYTES` | | `12 MB` | 单个附件上限（见[附件行为](#附件行为两条容易踩的规则)） |
+| `MAX_TOTAL_ATTACHMENT_BYTES` | | `16 MB` | 全部附件合计上限 |
 
 `SMTP_EMAIL` 与 `SMTP_PASSWORD` **没有默认值**：缺失时进程启动即报
 `ValidationError`，不会静默回退到某个内置凭据。这条约束由测试固化
@@ -192,13 +194,61 @@ python ollama_mcp_client.py        # 原生 MCP 客户端（交互模式）
 
 | 工具 | 参数 | 说明 |
 |---|---|---|
-| `send_text_email` | `to_email`, `subject`, `body`, `cc?`, `bcc?` | 纯文本邮件 |
-| `send_html_email` | `to_email`, `subject`, `html_body`, `cc?`, `bcc?` | HTML 邮件（自动附带纯文本回退） |
-| `send_email_with_attachment` | `to_email`, `subject`, `attachment_paths`, `body?`, `cc?`, `bcc?`, `is_html?` | 带附件邮件；省略 `body` 时自动生成正文 |
+| `send_text_email` | `to_email`, `subject`, `body`, `cc?`, `bcc?`, `idempotency_key?` | 纯文本邮件 |
+| `send_html_email` | `to_email`, `subject`, `html_body`, `cc?`, `bcc?`, `idempotency_key?` | HTML 邮件（自动附带纯文本回退） |
+| `send_email_with_attachment` | `to_email`, `subject`, `attachment_paths`, `body?`, `cc?`, `bcc?`, `is_html?`, `idempotency_key?` | 带附件邮件；省略 `body` 时自动生成正文 |
 | `check_email_config` | — | 检查 SMTP 配置与连通性 |
 | `save_environment_config` | `config_data`, `filename?` | 把配置保存为 `attachments/` 下的 JSON 文件 |
 
 `to_email` 接受单个字符串或字符串数组。
+
+### 附件行为（两条容易踩的规则）
+
+**1. 附件找不到会中止发送，而不是悄悄发出去。**
+
+早期实现是「静默跳过缺失附件、照样返回发送成功」——结果是用户以为附件发出去了，
+对方实际只收到一封空邮件。这类静默失败极难察觉，因此改为明确失败：
+
+```
+❌ 附件不存在，邮件未发送：D:\报表\7月.xlsx
+请确认文件路径是否正确，或先确认文件是否仍然存在。
+```
+
+此时**连 SMTP 连接都不会建立**。
+
+**2. 文件名说错时会尝试修正，并告知你替换了什么。**
+
+小模型常把文件名拼错或猜错扩展名（实测：目录里是 `测试数据.csv`，
+模型给出 `测试数据.xlsx`）。因此路径解析按下列顺序尝试：
+
+| 顺序 | 规则 | 例子 |
+|---|---|---|
+| 1 | 原路径存在 → 原样使用 | — |
+| 2 | 主干一致，仅扩展名不同 | `测试数据.xlsx` → `测试数据.csv` |
+| 3 | 归一化后一致（裁掉「表/文件/文档/附件」等修饰词） | `测试数据表.xlsx` → `测试数据.csv` |
+| 4 | **候选不唯一 → 不猜，报错** | `数据.txt`（同时存在 `.csv` 和 `.xlsx`）|
+
+发生替换时，结果里会写明，避免「悄悄换了另一个文件」而用户不知情：
+
+```
+✅ 邮件发送成功
+附件: 测试数据.csv
+（附件名已自动修正：测试数据.xlsx → 测试数据.csv）
+```
+
+第 4 条是刻意加的保护：**多个候选时宁可报错，也不发出用户没指定的文件。**
+
+**3. 附件大小有上限。**
+
+超限在发送前就拒绝，而不是等 SMTP 回一个难懂的英文错误：
+
+| 配置 | 默认 | 说明 |
+|---|---|---|
+| `MAX_ATTACHMENT_BYTES` | `12 MB` | 单个附件上限 |
+| `MAX_TOTAL_ATTACHMENT_BYTES` | `16 MB` | 全部附件合计上限 |
+
+阈值留了余量：QQ 邮箱单封上限约 25MB，而 Base64 编码会让体积膨胀约 1.37 倍。
+单件超限与合计超限会**分开报告**——前者通常是选错了文件，后者是「每件都不大但加起来太多」。
 
 ---
 
@@ -333,7 +383,7 @@ python -m pytest -q         # 精简输出
 python -m pytest tests/test_email_tools.py -v
 ```
 
-套件共 199 个用例，**全程不发起真实网络请求**：
+套件共 249 个用例，**全程不发起真实网络请求**：
 
 | 文件 | 关注点 |
 |---|---|
@@ -342,6 +392,7 @@ python -m pytest tests/test_email_tools.py -v
 | `tests/test_delivery.py` | **发送确认**：主题 MIME 解码匹配、收件人校验、重试轮询、失败降级 |
 | `tests/test_retry.py` | **重试分类**：4xx 可重试 / 5xx 不可重试、退避上限、次数耗尽的传播 |
 | `tests/test_idempotency.py` | **幂等键**：重复请求不再发送、TTL 过期、卡死占用回收 |
+| `tests/test_email_butler.py` | **管家**：多轮记忆、只显示本轮动作、Ollama 检查、附件列举、提示词约束 |
 | `tests/test_email_tools.py` | MIME 结构、UTF-8 编码、附件、连接复用、指标、错误处理 |
 | `tests/test_mcp_server.py` | REST 端点 + **真实 MCP 协议握手与工具调用** |
 | `tests/test_tool_defs.py` | 工具注册表一致性、参数校验、分发、超时 |
@@ -709,13 +760,14 @@ qqmail-mcp-tool/
 ├── .env.example             # 配置模板（可提交）
 ├── .env.test                # CI 用占位配置
 ├── .github/workflows/tests.yml
-├── tests/                   # 199 个用例
+├── tests/                   # 249 个用例
 │   ├── conftest.py
 │   ├── test_config.py
 │   ├── test_auth.py
 │   ├── test_delivery.py
 │   ├── test_retry.py
 │   ├── test_idempotency.py
+│   ├── test_email_butler.py
 │   ├── test_email_tools.py
 │   ├── test_mcp_server.py
 │   └── test_tool_defs.py
