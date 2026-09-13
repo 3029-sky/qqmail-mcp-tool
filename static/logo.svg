@@ -1,72 +1,97 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128"
-     role="img" aria-label="信使鸟：衔着信封的鸟">
+     role="img" aria-label="信使机器人：顶着通信天线的送信机器人">
   <!--
-    信使鸟 · 邮件管家的标识
+    信使机器人 · 信使鸟的标识
 
-    原创设计，刻意不与任何已注册角色相似：
-      · 不是什么特定作品的鸟，而是「会送信的鸟」这个通用意象
-      · 靠三样东西表意：鸟、信封、信使包
-      · 配色取自本程序界面的强调色，保证与 UI 同色系
+    设计取向：二次元萌系（chibi 大头小身 + 大眼高光 + 腮红），
+    但**造型完全原创**，不模仿任何已注册角色。取三样元素表意：
 
-    视觉结构（从下往上）：
-      信使包（左下）-> 信封 -> 鸟身 -> 头 -> 喙与信
+      · 头顶的通信天线与信号弧  -> 它是「传信的机器」
+      · 手里抱着的信封          -> 送的东西
+      · 斜挎的信使包 + 小翅膀    -> 「信使」身份，也呼应产品名里的「鸟」
+
+    配色沿用界面强调色（蓝）+ 暖橙点缀，与 UI 同色系。
+    刻意不用渐变：这个图标最小只用 26px 显示（顶栏），
+    渐变在这么小的尺寸上会被压成一块脏色，纯色反而更清楚。
   -->
   <defs>
-    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#6ea8ff"/>
-      <stop offset="1" stop-color="#2b5aa8"/>
-    </linearGradient>
-    <linearGradient id="wing" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#8fbcff"/>
-      <stop offset="1" stop-color="#3f6fd0"/>
-    </linearGradient>
-    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="1" stop-color="#dfe6f2"/>
-    </linearGradient>
+    <!-- 裁掉头部以外的部分，让天线与信号弧不会溢出圆形 -->
+    <clipPath id="face">
+      <path d="M30 60 Q30 24 64 24 Q98 24 98 60 Q98 96 64 96 Q30 96 30 60 Z"/>
+    </clipPath>
   </defs>
 
-  <!-- ========== 信使包（斜挎，暗示「信使」身份） ========== -->
-  <g>
-    <path d="M20 88 h34 a4 4 0 0 1 4 4 v18 a4 4 0 0 1 -4 4 H20 a4 4 0 0 1 -4 -4 V92 a4 4 0 0 1 4 -4 z"
-          fill="#e8a33d"/>
-    <path d="M24 88 v-6 a13 13 0 0 1 26 0 v6" fill="none"
-          stroke="#c9821f" stroke-width="4" stroke-linecap="round"/>
-    <rect x="30" y="99" width="14" height="9" rx="2" fill="#c9821f"/>
-  </g>
+  <!-- ========== 通信天线 + 信号弧（「传信的机器」） ========== -->
+  <path d="M58 24 L64 8 L70 24 Z" fill="#e8a33d"/>
+  <circle cx="64" cy="7" r="5" fill="#ffd166" stroke="#c9821f" stroke-width="1.6"/>
+  <!-- 两道信号弧：从天线向右上方扩散 -->
+  <path d="M74 20 Q82 16 86 8" fill="none" stroke="#6ea8ff"
+        stroke-width="3" stroke-linecap="round" opacity=".95"/>
+  <path d="M80 27 Q92 22 99 11" fill="none" stroke="#6ea8ff"
+        stroke-width="3" stroke-linecap="round" opacity=".6"/>
 
-  <!-- ========== 尾巴 ========== -->
-  <path d="M22 66 L4 82 L22 86 Z" fill="url(#wing)"/>
+  <!-- ========== 小翅膀（呼应「信使鸟」这个名字） ========== -->
+  <path d="M24 84 Q6 78 4 62 Q18 66 28 74 Z" fill="#8fbcff" stroke="#3f6fd0" stroke-width="1.6"/>
+  <path d="M104 84 Q122 78 124 62 Q110 66 100 74 Z" fill="#8fbcff" stroke="#3f6fd0" stroke-width="1.6"/>
 
   <!-- ========== 身体 ========== -->
-  <ellipse cx="58" cy="70" rx="30" ry="28" fill="url(#body)"/>
+  <rect x="46" y="84" width="36" height="30" rx="13" fill="#dfe6f2" stroke="#3f6fd0" stroke-width="2"/>
+  <!-- 胸口的小指示灯 -->
+  <circle cx="64" cy="95" r="4" fill="#4c8dff"/>
+  <circle cx="64" cy="95" r="1.6" fill="#cfe0ff"/>
 
-  <!-- ========== 翅膀 ========== -->
-  <path d="M46 52 q26 6 30 30 q-20 6 -30 -30 z" fill="url(#wing)"/>
+  <!-- ========== 头（chibi 大头，约占整体一半） ========== -->
+  <path d="M30 60 Q30 24 64 24 Q98 24 98 60 Q98 96 64 96 Q30 96 30 60 Z"
+        fill="#eef3fb" stroke="#3f6fd0" stroke-width="2.4"/>
 
-  <!-- ========== 头 ========== -->
-  <circle cx="76" cy="42" r="24" fill="url(#body)"/>
+  <!-- 面罩（深色面板，让眼睛更跳） -->
+  <path d="M40 62 Q40 48 64 48 Q88 48 88 62 Q88 74 64 74 Q40 74 40 62 Z"
+        fill="#1b2a45"/>
 
-  <!-- 眼睛：一颗实心点，简洁不拟人 -->
-  <circle cx="83" cy="38" r="4.6" fill="#12203a"/>
-  <circle cx="84.6" cy="36.4" r="1.6" fill="#ffffff" opacity=".9"/>
-
-  <!-- ========== 喙 ========== -->
-  <path d="M98 40 L118 46 L98 52 Z" fill="#f0b445"/>
-  <path d="M98 46 L118 46 L98 52 Z" fill="#d9942a"/>
-
-  <!-- ========== 衔着的信封（核心表意元素） ========== -->
-  <g transform="rotate(-12 104 60)">
-    <rect x="86" y="52" width="34" height="24" rx="3" fill="url(#paper)"
-          stroke="#b9c4d6" stroke-width="1.5"/>
-    <!-- 信封的折线 -->
-    <path d="M87 54 L103 66 L119 54" fill="none" stroke="#8f9db5"
-          stroke-width="2" stroke-linejoin="round"/>
+  <!-- 眼睛：大眼 + 双高光，萌感主要来自这里 -->
+  <g clip-path="url(#face)">
+    <ellipse cx="54" cy="60" rx="7" ry="8.4" fill="#4c8dff"/>
+    <ellipse cx="74" cy="60" rx="7" ry="8.4" fill="#4c8dff"/>
+    <circle cx="54" cy="60" r="3.6" fill="#0e1a30"/>
+    <circle cx="74" cy="60" r="3.6" fill="#0e1a30"/>
+    <!-- 高光 -->
+    <circle cx="56.6" cy="57" r="2.6" fill="#ffffff"/>
+    <circle cx="76.6" cy="57" r="2.6" fill="#ffffff"/>
+    <circle cx="52" cy="63" r="1.2" fill="#ffffff" opacity=".8"/>
+    <circle cx="72" cy="63" r="1.2" fill="#ffffff" opacity=".8"/>
   </g>
 
-  <!-- ========== 脚 ========== -->
-  <path d="M50 96 v8 M50 104 h-7 M50 104 h7" stroke="#c9821f" stroke-width="3.4"
-        stroke-linecap="round" fill="none"/>
-  <path d="M66 96 v8 M66 104 h-7 M66 104 h7" stroke="#c9821f" stroke-width="3.4"
-        stroke-linecap="round" fill="none"/>
+  <!-- 微笑：一条小弧线 -->
+  <path d="M58 78 Q64 82 70 78" fill="none" stroke="#2b5aa8"
+        stroke-width="2.2" stroke-linecap="round"/>
+
+  <!-- 腮红 -->
+  <ellipse cx="41" cy="72" rx="6" ry="3.6" fill="#ff9d9d" opacity=".55"/>
+  <ellipse cx="87" cy="72" rx="6" ry="3.6" fill="#ff9d9d" opacity=".55"/>
+
+  <!-- ========== 机械耳（两侧的小圆盘 + 螺丝） ========== -->
+  <circle cx="29" cy="62" r="6" fill="#c8d5e8" stroke="#3f6fd0" stroke-width="1.8"/>
+  <circle cx="99" cy="62" r="6" fill="#c8d5e8" stroke="#3f6fd0" stroke-width="1.8"/>
+  <path d="M26 62 h6 M96 62 h6" stroke="#5a7099" stroke-width="1.4" stroke-linecap="round"/>
+
+  <!-- ========== 信使包（斜挎带 + 小包） ========== -->
+  <path d="M50 86 L74 112" stroke="#c9821f" stroke-width="3.4" stroke-linecap="round"/>
+  <rect x="16" y="96" width="28" height="22" rx="6" fill="#e8a33d" stroke="#c9821f" stroke-width="1.8"/>
+  <rect x="24" y="104" width="12" height="7" rx="2" fill="#c9821f"/>
+
+  <!-- ========== 抱在手里的信封（核心表意元素） ========== -->
+  <g transform="rotate(-4 86 108)">
+    <rect x="62" y="98" width="52" height="34" rx="4" fill="#ffffff"
+          stroke="#8fa3c4" stroke-width="1.8"/>
+    <!-- 信封折线 -->
+    <path d="M63 100 L88 118 L113 100" fill="none" stroke="#8fa3c4"
+          stroke-width="2" stroke-linejoin="round"/>
+    <!-- 一枚小邮票，强化「信」的意象 -->
+    <rect x="102" y="102" width="9" height="8" rx="1.5" fill="#ffd166"
+          stroke="#c9821f" stroke-width="1"/>
+  </g>
+
+  <!-- ========== 小手（抓住信封，避免看起来是「浮」着的） ========== -->
+  <circle cx="62" cy="103" r="5" fill="#c8d5e8" stroke="#3f6fd0" stroke-width="1.8"/>
+  <circle cx="114" cy="103" r="5" fill="#c8d5e8" stroke="#3f6fd0" stroke-width="1.8"/>
 </svg>

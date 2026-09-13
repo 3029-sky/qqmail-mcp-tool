@@ -852,7 +852,7 @@ qqmail-mcp-tool/
 ├── open_window.py           # 把网页开成独立窗口（Edge --app 模式）
 ├── static/
 │   ├── index.html           # 前端界面（原生 HTML/CSS/JS，无构建步骤）
-│   └── logo.svg             # 信使鸟标识（原创 SVG，同时用作 favicon）
+│   └── logo.svg             # 信使机器人标识（原创 SVG，同时用作 favicon）
 ├── email_butler.py          # 终端界面（自动起服务器 + 多轮记忆）
 ├── clipboard.py             # 剪贴板导入（终端 /粘贴 指令：图片与文件）
 ├── envfile.py               # .env 读写（应用内改配置：保留注释、原子写、脱敏读）
