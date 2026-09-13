@@ -63,7 +63,7 @@
                         ┌─────────────────────────────────────────┐
                         │              MCP 客户端                 │
                         │  email_butler.py （邮件管家，日常入口）  │
-                        │  ollama_mcp_client.py （手写协议示例）   │
+                        │  （任何合规 MCP 客户端都可接入）         │
                         └────────────────────┬────────────────────┘
                                              │  MCP over HTTP (JSON-RPC)
                                              │  POST /mcp
@@ -163,12 +163,10 @@ python email_butler.py
 
 也可以双击根目录的 `启动管家.bat`。
 
-另一个客户端 `ollama_mcp_client.py` 需要你自己先启动服务器，
-它是**手写协议交互的示例**，不是日常工具（用途见[使用方式](#使用方式)）：
+需要手动控制服务器时（排查问题、或接入自己的客户端）：
 
 ```bash
-python ollama_mcp_client.py        # 交互模式
-python ollama_mcp_client.py test   # 直接跑一个固定测试
+python run_server.py
 ```
 
 ---
@@ -287,18 +285,13 @@ REST 端点仅用于人工排查，不参与 MCP 协议。
 
 ## 使用方式
 
-两个客户端，定位不同：
+项目自带一个对话客户端 **`email_butler.py`（邮件管家）**，
+它自己拉起 MCP 服务器、维护多轮对话记忆、并把工具调用显示出来。
 
-| 客户端 | 定位 | 需要手动启动服务器 |
-|---|---|---|
-| **`email_butler.py`** | **邮件管家（日常入口）**：单入口、带多轮记忆、动作可见 | ❌ 自己拉起 |
-| `ollama_mcp_client.py` | 手写协议交互示例：自己拼 JSON-RPC、自己解析模型输出 | ✅ |
+MCP 协议层本身是开放接口：任何合规 MCP 客户端都能连 `POST /mcp`，
+不必使用本项目提供的客户端（见下方[直接调用 HTTP 端点](#直接调用-http-端点)）。
 
-> 日常请用**邮件管家**。`ollama_mcp_client.py` 的价值在于展示 MCP 协议本身的
-> 交互方式（握手、会话、`tools/call`），不依赖框架抽象——但它**不带多轮记忆**，
-> 「主题改成…」这类追问接不住，因此不适合日常使用。
-
-### 邮件管家（推荐日常使用）
+### 邮件管家（日常入口）
 
 ```bash
 python email_butler.py
@@ -351,28 +344,15 @@ Ollama 没启动或模型没拉取时，它会直接给出可照抄的命令，�
 > 因此管家的提示词明确要求**立即调用工具真正发出邮件**——
 > 换成这样的措辞后，每一轮才都能落实为真实发送。
 
-### 另一个客户端：手写协议交互示例
+### 接入自己的客户端
 
-`ollama_mcp_client.py` 不依赖 LangChain：直接使用官方 MCP 客户端，
-并用字符串提示词让模型输出 `{tool, parameters}` JSON，再正则提取。
+MCP 协议层是开放的，任何合规客户端都能连 `POST /mcp`：
 
-它的价值在于**展示了 MCP 协议本身的交互方式**（握手、会话、`tools/call`），
-不依赖任何框架抽象。需要你自己先启动服务器与 Ollama：
+- `/tools` 列出全部工具及其完整 JSON Schema（浏览器可直接打开）
+- `/mcp` 接受 JSON-RPC 请求，需先完成 `initialize` 握手（见[访问控制](#访问控制)）
 
-```bash
-python run_server.py               # 另开一个窗口
-python ollama_mcp_client.py        # 交互模式
-python ollama_mcp_client.py test   # 直接跑一个固定测试
-```
-
-⚠️ 它**不带多轮记忆**（每轮独立解析），因此「主题改成…」这类追问会失败。
-这是刻意保留的简单实现，用于对照说明「为什么管家需要维护对话历史」，
-不要拿它做日常发信。
-
-### 直接调用 HTTP 端点
-
-不写客户端也可以，`/tools` 能列出全部工具及其 schema，`/mcp` 接受
-JSON-RPC 请求（需先 `initialize` 握手，见 [访问控制](#访问控制)）。
+本项目不内置第三方框架的示例客户端，以免与 `email_butler.py` 功能重叠——
+一个能对话、另一个不能，反而让人挑错入口。
 
 ⚠️ **不要连续快速发多封。** QQ 对单账号有频率限制，
 触发后会返回 `550 Too many attempts`，需要等待数小时恢复。
@@ -754,7 +734,6 @@ qqmail-mcp-tool/
 ├── idempotency.py           # 幂等键（防止重复发信）
 ├── email_butler.py          # 邮件管家（推荐入口：自动起服务器 + 多轮记忆）
 ├── 启动管家.bat              # 双击启动管家
-├── ollama_mcp_client.py     # 手写协议交互示例（不带多轮记忆）
 ├── teacher_config_sample.py # 配置示例与说明
 ├── create_attachments.py    # 生成测试附件
 ├── requirements.txt         # 运行时依赖

@@ -42,7 +42,6 @@ TEACHER_ENVIRONMENT_CONFIG = {
             "├── mcp_server.py          # MCP 服务器（官方 Streamable HTTP 传输）",
             "├── run_server.py          # 服务器启动脚本",
             "├── email_butler.py        # 邮件管家（推荐日常使用）",
-            "├── ollama_mcp_client.py   # 手写协议交互示例",
             "├── teacher_config_sample.py",
             "├── tests/                 # pytest 测试套件",
             "└── attachments/           # 附件目录",

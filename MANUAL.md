@@ -499,19 +499,13 @@ await email_tools.send_text_email(
 
 管家会自动管理服务器；只有在你需要手动控制或排查时才需要这样。
 
-### 另一个客户端：手写协议示例
+启动后可用浏览器打开 `http://localhost:8000/tools` 查看全部工具及其参数定义。
 
-`ollama_mcp_client.py` 演示**手写 MCP 协议交互**（自己拼 JSON-RPC、
-自己解析模型输出），用于理解协议本身：
+### 接入自己的程序
 
-```powershell
-.\venv\Scripts\python.exe run_server.py            # 另开一个窗口
-.\venv\Scripts\python.exe ollama_mcp_client.py     # 交互模式
-.\venv\Scripts\python.exe ollama_mcp_client.py test
-```
-
-⚠️ 它**不带多轮记忆**，「主题改成…」这类追问接不住。
-**不要拿它做日常发信。**
+MCP 协议层是开放的。若你想在自己的代码里调用，走 `POST /mcp`（JSON-RPC），
+需先完成 `initialize` 握手，再发 `tools/call`。工具清单与完整 JSON Schema
+可从 `GET /tools` 获取。
 
 ### 跑测试
 
