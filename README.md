@@ -55,7 +55,7 @@
 | **SMTP 连接复用** | 专用工作线程独占连接，实测 5 封邮件仅建立 1 条 TLS 连接 |
 | **结构化日志** | 可选单行 JSON 输出，便于日志系统采集 |
 | **发送指标** | 成功率、延迟分位数、失败原因分布，经 `/metrics` 暴露 |
-| **零外部依赖的测试** | 替换 SMTP/IMAP 层与注入替身，352 个用例不联网、不碰真实邮箱、约 5 秒跑完 |
+| **零外部依赖的测试** | 替换 SMTP/IMAP 层与注入替身，354 个用例不联网、不碰真实邮箱、约 5 秒跑完 |
 
 ---
 
@@ -151,7 +151,7 @@ copy .env.example .env          # Windows
 >
 > ```bash
 > copy .env.test .env      # 只有假数据，测试全程不发起真实请求
-> python -m pytest -q      # 应看到 352 passed
+> python -m pytest -q      # 应看到 354 passed
 > ```
 >
 > `SMTP_EMAIL` 与 `SMTP_PASSWORD` 是**必填**项，两者都缺失时测试会在
@@ -451,7 +451,7 @@ python -m pytest -q         # 精简输出
 python -m pytest tests/test_email_tools.py -v
 ```
 
-套件共 352 个用例，**全程不发起真实网络请求**：
+套件共 354 个用例，**全程不发起真实网络请求**：
 
 | 文件 | 关注点 |
 |---|---|
@@ -826,7 +826,7 @@ qqmail-mcp-tool/
 ├── .env.example             # 配置模板（可提交）
 ├── .env.test                # CI 用占位配置
 ├── .github/workflows/tests.yml
-├── tests/                   # 352 个用例
+├── tests/                   # 354 个用例
 │   ├── conftest.py
 │   ├── test_config.py
 │   ├── test_auth.py
@@ -854,7 +854,18 @@ qqmail-mcp-tool/
 - **凭据只经 `.env` 流转**。不要把它写进源码、提交信息、issue 或截图。
   本项目所有读取凭据的位置都集中在 `config.py`，源码中不存在硬编码凭据
   （由 `tests/test_config.py` 固化）。
-- **授权码泄露后应立即在 QQ 邮箱重新生成**，旧码随即失效。
+- **不要为了排查问题把授权码贴给别人或工具**。贴进对话窗口（聊天软件、
+  AI 助手、工单）就等同于泄露——「贴出来再删掉」没有用，消息记录里已经有了。
+  调试时只报「长度对不对」，不要报内容：
+  ```bash
+  python -c "from config import settings; print(len(settings.smtp_password))"
+  ```
+- **授权码泄露后应重新生成**（不必改 QQ 密码）：QQ 邮箱网页版 → 设置 →
+  账户 → 「IMAP/SMTP服务」→ 删除旧码 → 生成新码 → 更新本机 `.env`。
+  旧码随即失效。
+- **网页界面的 `/api/info` 不返回任何凭据**，只回邮箱地址、当前模型与
+  附件目录等展示所需字段（由 `tests/test_webui.py` 固化）。
+- **网页界面只监听 `127.0.0.1`**。它能直接发邮件，不要对局域网或公网开放。
 
 ### 访问控制
 

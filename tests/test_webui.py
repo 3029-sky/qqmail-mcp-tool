@@ -72,6 +72,40 @@ async def test_info_reports_email_and_limits(client, attachment_dir):
     assert data["max_attachment_bytes"] == 1024 * 100
 
 
+async def test_api_never_leaks_credentials(client):
+    """
+    回归测试：接口绝不能把授权码泄出去。
+
+    这个界面能直接发邮件，授权码就是「以你名义发信」的钥匙。
+    这里不只看键名，还把响应全文与真实凭据比对——多一层保险：
+    就算将来有人把 settings 整个 dump 出去，这条也会拦住。
+    """
+    from config import settings
+
+    secret = str(settings.smtp_password)
+
+    for path in ("/api/info", "/api/models", "/api/attachments", "/health"):
+        resp = await client.get(path)
+        body = resp.text
+
+        assert secret not in body, "%s 泄露了授权码" % path
+        lowered = body.lower()
+        for bad in ("password", "authorization", "auth_token", "mcp_auth_token"):
+            assert bad not in lowered, "%s 出现了可疑字段名 %r" % (path, bad)
+
+
+async def test_info_does_not_dump_settings_object(client):
+    """界面只需要展示字段，不该把整个配置对象丢出去。"""
+    from config import settings
+
+    keys = set((await client.get("/api/info")).json().keys())
+    allowed = {
+        "email", "model", "ready", "attachments_dir",
+        "max_attachment_bytes", "max_attachment_text", "startup_log", "error",
+    }
+    assert keys <= allowed, "出现了未预期的字段：%s" % sorted(keys - allowed)
+
+
 async def test_models_lists_installed_and_current(client, monkeypatch):
     import butler_core
 
