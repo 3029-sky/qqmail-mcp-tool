@@ -306,6 +306,80 @@ def test_check_ollama_accepts_explicit_model(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# MCP 鉴权：客户端必须把令牌发出去
+# ---------------------------------------------------------------------------
+
+def test_mcp_headers_empty_without_token(monkeypatch):
+    """没配令牌时不带任何头，行为与以前一致。"""
+    import butler_core
+    from config import settings
+
+    monkeypatch.setattr(settings, "mcp_auth_token", None)
+    assert butler_core.mcp_headers() == {}
+
+
+def test_mcp_headers_blank_token_treated_as_unset(monkeypatch):
+    """`.env` 里写成 `MCP_AUTH_TOKEN=   ` 应视为未配置，而不是发一个空令牌。"""
+    import butler_core
+    from config import settings
+
+    monkeypatch.setattr(settings, "mcp_auth_token", "   ")
+    assert butler_core.mcp_headers() == {}
+
+
+def test_mcp_headers_sends_bearer_token(monkeypatch):
+    """
+    回归测试：配了令牌就必须带上 Authorization 头。
+
+    这条曾经缺失，后果不小：服务端支持 Bearer 鉴权，但客户端从不发令牌——
+    于是「开启鉴权」等于「管家自己先连不上」。用户只能关掉鉴权，
+    服务器就一直 0.0.0.0 对外监听。一个正确的安全默认值
+    被一处接线缺失挡住了。
+    """
+    import butler_core
+    from config import settings
+
+    monkeypatch.setattr(settings, "mcp_auth_token", "s3cret")
+    assert butler_core.mcp_headers() == {"Authorization": "Bearer s3cret"}
+
+
+def test_mcp_client_receives_headers(monkeypatch):
+    """真正传给 MCP 客户端的配置里必须包含 headers 字段。"""
+    import asyncio
+
+    import butler_core
+    from config import settings
+
+    monkeypatch.setattr(settings, "mcp_auth_token", "tok-123")
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, connections):
+            captured["connections"] = connections
+
+        async def get_tools(self):
+            class T:
+                name = "t"
+            return [T()]
+
+    import langchain_mcp_adapters.client as client_module
+    monkeypatch.setattr(client_module, "MultiServerMCPClient", FakeClient)
+
+    session = butler_core.AgentSession(start_server=False)
+
+    async def fake_use_model(ref, on_step=None):
+        session.model = ref
+
+    monkeypatch.setattr(session, "use_model", fake_use_model)
+    asyncio.run(session.start(on_step=lambda _t: None))
+
+    conn = captured["connections"]["qqmail"]
+    assert conn["headers"] == {"Authorization": "Bearer tok-123"}, (
+        "MCP 客户端配置里必须带上鉴权头，否则开启鉴权后管家连不上"
+    )
+
+
+# ---------------------------------------------------------------------------
 # 模型引用 provider:model
 # ---------------------------------------------------------------------------
 

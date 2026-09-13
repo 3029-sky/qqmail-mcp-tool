@@ -1,0 +1,41 @@
+# ============================================================
+# 行尾统一
+# ============================================================
+# 本项目在 Windows 上开发，但应该能在任何平台克隆后正常使用。
+#
+# 为什么不靠 core.autocrlf：那是**每个开发者本机的设置**，
+# 别人克隆时不生效，于是同一个文件在不同机器上行尾不同，
+# diff 会显示「整个文件都改了」。
+#
+# 这里的规则是：仓库里一律存 LF，检出时按平台决定。
+# 文本文件交给 git 自动处理，二进制文件明确标记以免被改写损坏。
+
+# 默认：仓库内统一 LF
+* text=auto eol=lf
+
+# Windows 专用脚本必须保留 CRLF —— cmd.exe 对 LF 结尾的 .bat
+# 在某些情况下会解析异常，而这两个文件是给双击用的。
+*.bat text eol=crlf
+
+# 二进制：绝不做行尾转换（转换会损坏文件）
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.xlsx binary
+
+# 这些文件本来就用 LF，明确一下避免被 autocrlf 改动
+*.py   text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.yml  text eol=lf
+*.ini  text eol=lf
+*.json text eol=lf
+
+# 语言统计时不要把文档算进代码
+*.md   linguist-documentation
+tests/ linguist-vendored=false

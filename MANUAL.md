@@ -99,7 +99,7 @@ SMTP_PASSWORD=16位授权码
 .\venv\Scripts\python.exe -m pytest -q
 ```
 
-看到 `503 passed` 说明环境完好。**这一步不需要网络、不碰邮箱**，
+看到 `507 passed` 说明环境完好。**这一步不需要网络、不碰邮箱**，
 是最快的环境自检方式。
 
 > ⚠️ **前提：`.env` 必须已经存在**（第 1 步）。
@@ -433,7 +433,7 @@ cd <你克隆项目的目录>\qqmail-mcp-tool
 | `send_email_with_attachment` | 收件人、主题、附件路径 | 正文、抄送、密送、HTML、幂等键 |
 | `check_email_config` | — | — |
 
-### HTTP 端点（5 个）
+### HTTP 端点（4 个）
 
 自己启动服务器时可用（`.\venv\Scripts\python.exe run_server.py`）：
 
@@ -474,11 +474,31 @@ cd <你克隆项目的目录>\qqmail-mcp-tool
 | 配置 | 默认 | 作用 |
 |---|---|---|
 | `OLLAMA_MODEL` | `qwen2.5:3b` | 换更大模型会更聪明（需机器扛得住） |
+| `DEEPSEEK_API_KEY` | 未设置 | 填了才能用 DeepSeek 云端模型（需先装 `langchain-openai`） |
+| `ACTIVE_MODEL` | 未设置 | 当前选用的模型，形如 `ollama:qwen2.5:3b`；界面切换时自动写入 |
 | `EMAIL_CONFIRM_DELIVERY` | `false` | 开启后用 IMAP 回读确认已归档（每封多 1-3 秒） |
 | `SEND_MAX_ATTEMPTS` | `3` | 瞬时故障的重试次数；`1` 表示不重试 |
-| `MCP_HOST` | `0.0.0.0` | 只用本机可改 `127.0.0.1` |
+| `MCP_HOST` | `0.0.0.0` | ⚠️ **见下方安全提示** —— 默认监听所有网卡 |
 | `MCP_AUTH_TOKEN` | 未设置 | `/mcp` 访问令牌，对外暴露时必设 |
 | `JSON_LOGS` | 未设置 | 设 `1` 输出单行 JSON 日志 |
+
+> ⚠️ **`MCP_HOST` 默认是 `0.0.0.0`（监听所有网卡），而 `MCP_AUTH_TOKEN` 默认没设。**
+> 两者叠加的后果是：**同一局域网内的任何人都能调用你的 `/mcp`，用你的邮箱发信。**
+>
+> 如果你只用图形界面或终端管家（它们都连 `127.0.0.1`），
+> 最省事的做法是把 `MCP_HOST` 改成 `127.0.0.1`：
+>
+> ```ini
+> MCP_HOST=127.0.0.1
+> ```
+>
+> 确实需要让别的机器接入时，就**必须**同时设置令牌：
+>
+> ```powershell
+> .\venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(32))"
+> ```
+> 把结果填进 `.env` 的 `MCP_AUTH_TOKEN`。客户端连接时需带
+> `Authorization: Bearer <令牌>`；管家会自动读取这一项。
 
 ### 进阶（一般不用改）
 
@@ -488,6 +508,7 @@ cd <你克隆项目的目录>\qqmail-mcp-tool
 | `MCP_PORT` | `8000` | 服务器端口 |
 | `DEBUG` | `true` | 调试日志 |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama 地址 |
+| `DEEPSEEK_BASE_URL` / `DEEPSEEK_MODEL` | `https://api.deepseek.com/v1` / `deepseek-chat` | DeepSeek 接入点 |
 | `IMAP_SERVER` / `IMAP_PORT` | `imap.qq.com` / `993` | 发送确认用 |
 | `IMAP_SENT_FOLDER` | `"Sent Messages"` | 已发送文件夹名（含引号） |
 | `CONFIRM_ATTEMPTS` / `CONFIRM_INTERVAL` | `3` / `2.0` | 确认的轮询次数与间隔 |

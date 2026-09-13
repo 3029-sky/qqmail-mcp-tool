@@ -31,6 +31,7 @@ __all__ = [
     "build_system_prompt",
     "MAX_HISTORY_MESSAGES",
     "MCP_URL",
+    "mcp_headers",
     "HEALTH_URL",
     "OLLAMA",
     "DEEPSEEK",
@@ -64,6 +65,23 @@ MCP_HOST = "127.0.0.1"
 MCP_PORT = 8000
 MCP_URL = "http://%s:%d/mcp" % (MCP_HOST, MCP_PORT)
 HEALTH_URL = "http://%s:%d/health" % (MCP_HOST, MCP_PORT)
+
+
+def mcp_headers() -> Dict[str, str]:
+    """
+    连接 MCP 服务器时要带的请求头。
+
+    为什么必须有这个函数：服务端支持 Bearer 令牌鉴权，但客户端一直
+    没把令牌发出去——于是「开启鉴权」就等于「管家自己先连不上」。
+    结果只能是关掉鉴权，服务器便一直裸奔对外监听。
+    正确的默认值被一个接线缺失挡住了，这里补上。
+
+    未配置令牌时返回空字典，行为与之前完全一致。
+    """
+    token = (settings.mcp_auth_token or "").strip()
+    if not token:
+        return {}
+    return {"Authorization": "Bearer %s" % token}
 
 #: 交给智能体的历史消息上限，避免越聊越长拖慢每轮推理
 MAX_HISTORY_MESSAGES = 24
@@ -627,9 +645,13 @@ class AgentSession:
         step("正在从 MCP 服务器加载工具…")
         from langchain_mcp_adapters.client import MultiServerMCPClient
 
-        client = MultiServerMCPClient(
-            {"qqmail": {"url": MCP_URL, "transport": "streamable_http"}}
-        )
+        client = MultiServerMCPClient({
+            "qqmail": {
+                "url": MCP_URL,
+                "transport": "streamable_http",
+                "headers": mcp_headers(),
+            }
+        })
         self.tools = await client.get_tools()
         if not self.tools:
             raise RuntimeError("MCP 服务器没有返回任何工具")

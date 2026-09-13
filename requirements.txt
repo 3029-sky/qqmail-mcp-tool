@@ -1,29 +1,47 @@
+# ============================================================
+# 运行时依赖
+# ============================================================
+# 安装：
+#     python -m venv venv
+#     .\venv\Scripts\python.exe -m pip install -r requirements.txt
+#
+# 除下面这些之外，还需要一个**随 Python 安装**的模块：
+#   · tkinter —— 剪贴板图片转 PNG 时用（clipboard.py）。
+#     Windows 官方安装包默认包含；Linux 上需要单独装 python3-tk。
+#     它不通过 pip 安装，所以不写在这里；缺了也只影响 /粘贴 图片。
+# ============================================================
+
+# ---------- MCP 服务器 ----------
 mcp>=1.0.0
 fastapi>=0.104.0
+# starlette 是 fastapi 的传递依赖，但 mcp_server.py 直接 import 了它
+# （用它的 Route / Mount 把原生 ASGI 挂进 FastAPI），所以显式声明。
+starlette>=0.27.0
 uvicorn[standard]>=0.24.0
+# 文件上传（webui 的粘贴/拖放）。fastapi 的 UploadFile 需要它。
+python-multipart>=0.0.6
 httpx>=0.25.0
+
+# ---------- 配置 ----------
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
-aiosmtplib>=2.0.0
-email-validator>=2.1.0
+# python-dotenv 由 pydantic-settings 使用（读 .env）。显式声明以免上游改动。
 python-dotenv>=1.0.0
-rich>=13.0.0
-python-multipart>=0.0.6
 
-# 剪贴板读取（clipboard.py 的 /粘贴 指令）。
-# 它本来是 mcp 的间接依赖，但我们是直接 import 的，所以显式声明。
-# 只在 Windows 上安装；其他平台上 /粘贴 会提示不可用，不影响发信。
+# ---------- 剪贴板（clipboard.py 的 /粘贴 指令）----------
+# 只在 Windows 上安装；其他平台 /粘贴 会提示不可用，不影响发信。
 pywin32>=306; sys_platform == "win32"
 
-# 邮件管家与智能体（email_butler.py / webui.py）
-# langchain-ollama 提供实现 bind_tools 的 ChatOllama；
-# langchain-community 里的同名类没有实现该方法，会导致 create_agent 报 NotImplementedError。
+# ---------- 智能体（email_butler.py / webui.py）----------
+# langchain-ollama 提供实现了 bind_tools 的 ChatOllama；
+# langchain-community 里的同名类没有实现该方法，
+# 会让 create_agent 抛 NotImplementedError（实测踩过）。
 langchain>=1.0.0
 langchain-core>=1.0.0
 langchain-ollama>=1.0.0
 langchain-mcp-adapters>=0.1.0
 
-# 可选：使用 DeepSeek 云端模型时需要（本地 Ollama 模型不需要）。
-# 装上之后在应用「设置」里填入 DEEPSEEK_API_KEY 即可选用。
-# 不装也能跑，只是 DeepSeek 选项会提示需要安装。
+# ---------- 可选：DeepSeek 云端模型 ----------
+# 本地 Ollama 模型不需要它。装上并在应用「设置」里填 DEEPSEEK_API_KEY
+# 之后即可在下拉框里选用；不装也能跑，只是 DeepSeek 选项会提示需安装。
 langchain-openai>=1.0.0
