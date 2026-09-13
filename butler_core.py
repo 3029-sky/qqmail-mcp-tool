@@ -39,6 +39,8 @@ __all__ = [
     "check_model",
     "build_chat_model",
     "deepseek_configured",
+    "deepseek_dependency_ready",
+    "deepseek_ready",
     "list_available_models",
     "check_ollama",
     "list_ollama_models",
@@ -178,6 +180,27 @@ def deepseek_configured() -> bool:
     return bool((settings.deepseek_api_key or "").strip())
 
 
+def deepseek_dependency_ready() -> bool:
+    """
+    是否装了 `langchain-openai`。
+
+    单独检测它，是为了把「缺依赖」这件事提前暴露在界面上：
+    否则用户会先把 API Key 配好、以为万事俱备，选中后才收到一句错误。
+    能提前说清楚的事，不该等到操作失败才说。
+    """
+    import importlib.util  # noqa: PLC0415
+
+    try:
+        return importlib.util.find_spec("langchain_openai") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def deepseek_ready() -> bool:
+    """DeepSeek 是否可用：既要 Key，也要依赖。"""
+    return deepseek_configured() and deepseek_dependency_ready()
+
+
 def active_ref() -> str:
     """
     当前模型引用。
@@ -205,6 +228,12 @@ def check_model(ref: str) -> Optional[str]:
                 "还没有配置 DeepSeek API Key。\n"
                 "请在「设置」里填入 DEEPSEEK_API_KEY（在 platform.deepseek.com 申请），"
                 "或改回本地模型。"
+            )
+        if not deepseek_dependency_ready():
+            return (
+                "使用 DeepSeek 还需要安装一个依赖（只需装一次）：\n"
+                "    .\\venv\\Scripts\\python.exe -m pip install langchain-openai\n"
+                "装完后重启应用。本地 Ollama 模型不需要它。"
             )
         return None
 
@@ -265,14 +294,22 @@ def list_available_models() -> List[Dict[str, Any]]:
         })
 
     configured = deepseek_configured()
+    dependency = deepseek_dependency_ready()
+
     for name in DEEPSEEK_MODELS:
+        if not configured:
+            available, reason = False, "需要先填 DeepSeek API Key"
+        elif not dependency:
+            available, reason = False, "需要安装 langchain-openai（见应用内提示）"
+        else:
+            available, reason = True, ""
         items.append({
             "ref": make_ref(DEEPSEEK, name),
             "provider": DEEPSEEK,
             "name": name,
             "label": "%s（DeepSeek 云端）" % name,
-            "available": configured,
-            "reason": "" if configured else "需要先填 DeepSeek API Key",
+            "available": available,
+            "reason": reason,
         })
 
     return items

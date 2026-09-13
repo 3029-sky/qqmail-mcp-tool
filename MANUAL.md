@@ -99,7 +99,7 @@ SMTP_PASSWORD=16位授权码
 .\venv\Scripts\python.exe -m pytest -q
 ```
 
-看到 `403 passed` 说明环境完好。**这一步不需要网络、不碰邮箱**，
+看到 `407 passed` 说明环境完好。**这一步不需要网络、不碰邮箱**，
 是最快的环境自检方式。
 
 > ⚠️ **前提：`.env` 必须已经存在**（第 1 步）。
@@ -168,7 +168,15 @@ SMTP_PASSWORD=16位授权码
 2. 到 <https://platform.deepseek.com> 申请 API Key
 3. 重启应用 → 「设置」填入 Key → 保存 → 在模型下拉框选 `deepseek:deepseek-chat`
 
-没配 Key 时下拉框里也能看到 DeepSeek 选项，只是标着「需要先填 DeepSeek API Key」。
+DeepSeek 选项**始终**出现在下拉框里，缺什么会直接标出来：
+
+| 缺什么 | 下拉框里显示 |
+|---|---|
+| 没填 API Key | 需要先填 DeepSeek API Key |
+| 没装 langchain-openai | 需要安装 langchain-openai |
+
+选到标着「不可用」的选项时会弹提示说明原因；模型切换失败的提示会**停留 20 秒**、
+可点击关闭，方便照抄里面的命令。
 
 > ⚠️ 这个窗口是**本地专用**的（只监听 `127.0.0.1:8765`）。
 > 它能直接发邮件，**不要**把它暴露到局域网或公网。

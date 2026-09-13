@@ -55,7 +55,7 @@
 | **SMTP 连接复用** | 专用工作线程独占连接，实测 5 封邮件仅建立 1 条 TLS 连接 |
 | **结构化日志** | 可选单行 JSON 输出，便于日志系统采集 |
 | **发送指标** | 成功率、延迟分位数、失败原因分布，经 `/metrics` 暴露 |
-| **零外部依赖的测试** | 替换 SMTP/IMAP 层与注入替身，403 个用例不联网、不碰真实邮箱、约 5 秒跑完 |
+| **零外部依赖的测试** | 替换 SMTP/IMAP 层与注入替身，407 个用例不联网、不碰真实邮箱、约 5 秒跑完 |
 
 ---
 
@@ -151,7 +151,7 @@ copy .env.example .env          # Windows
 >
 > ```bash
 > copy .env.test .env      # 只有假数据，测试全程不发起真实请求
-> python -m pytest -q      # 应看到 403 passed
+> python -m pytest -q      # 应看到 407 passed
 > ```
 >
 > `SMTP_EMAIL` 与 `SMTP_PASSWORD` 是**必填**项，两者都缺失时测试会在
@@ -210,8 +210,15 @@ python webui.py --no-open  # 只启动服务，自己在浏览器打开 http://1
 3. 重启应用 → 右上角「设置」→ 填入「DeepSeek API Key」→ 保存 →
    在模型下拉框里选 `deepseek:deepseek-chat`
 
-没配 Key 时 DeepSeek 选项也会**列出来**并标注「需要先填 DeepSeek API Key」——
-藏起来的话用户根本不知道有这个能力。
+DeepSeek 选项**始终**列在下拉框里，缺什么就标什么，而且是**提前**标：
+
+| 缺什么 | 下拉框里显示 |
+|---|---|
+| 没填 API Key | 需要先填 DeepSeek API Key |
+| 没装 `langchain-openai` | 需要安装 langchain-openai |
+
+「提前标出来」是刻意的：能提前说清楚的事，不该等到你选中之后才报错。
+（这条是踩出来的——最初只弹一句「切换模型失败」，完全看不出要装东西。）
 
 #### 关于应用内改配置
 
@@ -481,7 +488,7 @@ python -m pytest -q         # 精简输出
 python -m pytest tests/test_email_tools.py -v
 ```
 
-套件共 403 个用例，**全程不发起真实网络请求**：
+套件共 407 个用例，**全程不发起真实网络请求**：
 
 | 文件 | 关注点 |
 |---|---|
@@ -858,7 +865,7 @@ qqmail-mcp-tool/
 ├── .env.example             # 配置模板（可提交）
 ├── .env.test                # CI 用占位配置
 ├── .github/workflows/tests.yml
-├── tests/                   # 403 个用例
+├── tests/                   # 407 个用例
 │   ├── conftest.py
 │   ├── test_config.py
 │   ├── test_auth.py

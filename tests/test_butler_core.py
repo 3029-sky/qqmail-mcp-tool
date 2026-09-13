@@ -379,7 +379,67 @@ def test_check_model_accepts_deepseek_with_key(monkeypatch):
     from config import settings
 
     monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    monkeypatch.setattr(butler_core, "deepseek_dependency_ready", lambda: True)
     assert butler_core.check_model("deepseek:deepseek-chat") is None
+
+
+def test_check_model_reports_missing_dependency_with_install_command(monkeypatch):
+    """
+    配了 Key 但没装 langchain-openai 时，提示必须给出可照抄的安装命令。
+
+    这条踩过：用户配好 Key 后选中 DeepSeek，只收到一句
+    「切换模型失败」，完全不知道要装东西。
+    """
+    import butler_core
+    from config import settings
+
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    monkeypatch.setattr(butler_core, "deepseek_dependency_ready", lambda: False)
+
+    problem = butler_core.check_model("deepseek:deepseek-chat")
+    assert problem is not None
+    assert "pip install langchain-openai" in problem, "要能直接照抄"
+
+
+def test_deepseek_dependency_ready_reflects_reality():
+    """当前环境确实装了它（本仓库把它列进了 requirements）。"""
+    import butler_core
+
+    assert butler_core.deepseek_dependency_ready() is True
+
+
+def test_list_available_models_gates_on_dependency(monkeypatch):
+    """
+    缺依赖时 DeepSeek 选项要**提前标成不可用**。
+
+    否则用户会先配好 Key、以为万事俱备，选中后才收到错误。
+    能提前说清楚的事，不该等到操作失败才说。
+    """
+    import butler_core
+    from config import settings
+
+    monkeypatch.setattr(butler_core, "list_ollama_models", lambda: [])
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    monkeypatch.setattr(butler_core, "deepseek_dependency_ready", lambda: False)
+
+    deepseek = [m for m in butler_core.list_available_models()
+                if m["provider"] == "deepseek"]
+    assert deepseek
+    assert all(not m["available"] for m in deepseek)
+    assert all("langchain-openai" in m["reason"] for m in deepseek)
+
+
+def test_list_available_models_marks_deepseek_ready(monkeypatch):
+    import butler_core
+    from config import settings
+
+    monkeypatch.setattr(butler_core, "list_ollama_models", lambda: [])
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    monkeypatch.setattr(butler_core, "deepseek_dependency_ready", lambda: True)
+
+    deepseek = [m for m in butler_core.list_available_models()
+                if m["provider"] == "deepseek"]
+    assert deepseek and all(m["available"] for m in deepseek)
 
 
 def test_list_available_models_includes_deepseek_always(monkeypatch):
@@ -404,7 +464,7 @@ def test_list_available_models_includes_deepseek_always(monkeypatch):
     assert all("API Key" in m["reason"] for m in deepseek)
 
 
-def test_build_chat_model_makes_ollama(monkeypatch):
+def test_build_chat_model_makes_ollama():
     import butler_core
 
     model = butler_core.build_chat_model("ollama:qwen2.5:3b")

@@ -282,6 +282,7 @@ async def api_models():
         "current": butler_core.active_ref(),
         "default_ollama": settings.ollama_model,
         "deepseek_configured": butler_core.deepseek_configured(),
+        "deepseek_dependency": butler_core.deepseek_dependency_ready(),
     }
 
 

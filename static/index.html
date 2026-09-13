@@ -510,11 +510,30 @@
 const $ = (id) => document.getElementById(id);
 
 function toast(text, kind = "") {
+  showToast(text, kind, kind === "err" ? 7000 : 4200);
+}
+
+/**
+ * 多行、需要照抄的错误（例如「请先执行 pip install ...」）用它。
+ *
+ * 为什么单独一个：模型切换失败的信息里通常是可复制的命令，
+ * 4 秒就消失等于没提示——用户只看到「切换失败」四个字，
+ * 根本不知道要做什么。
+ */
+function toastDetail(text, kind = "err") {
+  showToast(text, kind, 20000);
+}
+
+function showToast(text, kind, ttl) {
   const el = document.createElement("div");
   el.className = "toast " + kind;
   el.textContent = text;
+  el.style.whiteSpace = "pre-wrap";     // 保留换行，命令才能照抄
+  el.style.cursor = "pointer";
+  el.title = "点击关闭";
+  el.onclick = () => el.remove();
   $("toasts").appendChild(el);
-  setTimeout(() => el.remove(), kind === "err" ? 7000 : 4200);
+  setTimeout(() => el.remove(), ttl);
 }
 
 async function api(path, options = {}) {
@@ -1049,7 +1068,8 @@ async function switchModel(ref, selectEl) {
     addMessage("butler", "已切换到模型 " + currentRef + "。对话历史保留，可以直接说「主题改成…」。");
     return true;
   } catch (e) {
-    toast("切换失败：" + e.message, "err");
+    // 用能停留、能换行的提示：模型切换失败的说明里通常有可照抄的命令
+    toastDetail("切换模型失败：\n" + e.message, "err");
     selectEl.value = previous;
     currentRef = previous;
     return false;
