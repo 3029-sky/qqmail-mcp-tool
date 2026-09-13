@@ -165,26 +165,78 @@ def _normalize_stem(name: str) -> str:
     return stem
 
 
+#: 需要从路径两端剥掉的引号（中英文都算）。
+#: 模型经常把路径写成 `"D:\照片\团建.jpg"` 或 `「D:\照片\团建.jpg」`，
+#: 这些引号在 Windows 上是**合法文件名字符**，于是 is_file() 判定失败，
+#: 一个本来完全正确的路径被误报成「附件不存在」。
+_QUOTE_CHARS = "\"'“”‘’「」『』"
+
+
+def _strip_quotes(text: str) -> str:
+    """剥掉路径两端的引号与空白。"""
+    return text.strip().strip(_QUOTE_CHARS).strip()
+
+
+def _find_in_directory(directory: Path, wanted: Path) -> Optional[Path]:
+    """
+    在 directory 中找出与 wanted 指向同一文件的最佳候选。
+
+    两级匹配：
+      1. 主干完全一致（仅扩展名可能不同）
+      2. 归一化后一致（能吸收「示例报表表」这类修饰词）
+
+    **候选不唯一时返回 None** —— 无法确定用户要哪个，宁可报错也不乱猜。
+    """
+    try:
+        entries = [e for e in directory.iterdir() if e.is_file()]
+    except OSError:
+        return None
+
+    stem = wanted.stem
+    if not stem:
+        return None
+
+    exact = [
+        e for e in entries
+        if Path(e.name).stem.lower() == stem.lower()
+        or e.name.lower() == wanted.name.lower()
+    ]
+    normal = [
+        e for e in entries if _normalize_stem(e.name) == _normalize_stem(wanted.name)
+    ]
+
+    for candidates in (exact, normal):
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
+            return None      # 多个候选 -> 不猜
+    return None
+
+
 def resolve_attachment_paths(paths: List[str]) -> tuple:
     """
     把用户/模型给出的附件路径尽量解析成真实存在的文件。
 
     为什么需要它：小模型经常把文件名拼错或猜错扩展名
-    （实测：目录里是 `示例报表.csv`，模型给出 `示例报表.xlsx`）。
-    直接报错会让用户白跑一趟，而用户的本意显然是那个真实存在的文件。
+    （实测：目录里是 `示例报表.csv`，模型给出 `示例报表.xlsx`），
+    或者把路径用引号包起来。直接报错会让用户白跑一趟，
+    而用户的本意显然是那个真实存在的文件。
 
     解析顺序：
       1. 原路径存在 -> 原样使用
-      2. 目录里同名文件（大小写不敏感）
-      3. 文件名主干相同、仅扩展名不同 —— 仅当**只有一个**候选时才采用，
-         以免在多候选时猜错文件
+      2. 剥掉两端引号后再试一次（`"D:\\照片\\团建.jpg"` 这类写法）
+      3. 在「给定目录」里按主干/归一化匹配
+      4. 在**附件目录**里按主干/归一化匹配
+
+    第 4 步是必需的：系统提示词已经把附件目录里的真实文件名列给了模型，
+    而模型很自然地只回一个裸文件名（如 `示例报表.csv`）。但裸文件名的
+    parent 是「当前工作目录」而非附件目录，于是这个**确实存在**的文件
+    反而被判为不存在、整封邮件发不出去。
 
     返回 (resolved, missing, substitutions)：
       substitutions 记录「原名 -> 实际使用的名字」，用于在结果里告知用户，
       避免它悄悄换成别的文件却不说明。
     """
-    #: 归一化时裁掉的后缀词。小模型加修饰词时能对上，
-    #: 例如把「示例报表.csv」说成「示例报表表.xlsx」
     resolved: List[str] = []
     missing: List[str] = []
     substitutions: List[str] = []
@@ -195,37 +247,46 @@ def resolve_attachment_paths(paths: List[str]) -> tuple:
             resolved.append(str(original))
             continue
 
-        directory = original.parent
-        stem = original.stem
-        if not (directory.is_dir() and stem):
-            missing.append(str(original))
-            continue
+        # 候选路径按优先级排列：原样、剥引号后的形态
+        candidates = [(original, None)]
+        stripped = _strip_quotes(str(raw))
+        if stripped and stripped != str(raw):
+            candidates.append((Path(stripped), None))
 
-        entries = [e for e in directory.iterdir() if e.is_file()]
+        chosen: Optional[Path] = None
 
-        # 第一优先：主干完全一致（仅扩展名可能不同）
-        exact = [
-            e for e in entries
-            if Path(e.name).stem.lower() == stem.lower()
-            or e.name.lower() == original.name.lower()
-        ]
-        # 第二优先：归一化后一致（能吸收「示例报表表」这类修饰词）
-        normal = [
-            e for e in entries if _normalize_stem(e.name) == _normalize_stem(original.name)
-        ]
-
-        chosen = None
-        for candidates in (exact, normal):
-            if len(candidates) == 1:
-                chosen = candidates[0]
+        for candidate, _ in candidates:
+            if candidate.is_file():
+                chosen = candidate
                 break
-            if len(candidates) > 1:
-                # 多个候选 -> 无法确定用户要哪个，宁可报错也不乱猜
-                break
+
+        # 指定目录内的宽松匹配（先看给定目录，再看附件目录）
+        if chosen is None:
+            for candidate, _ in candidates:
+                directories = []
+                if str(candidate.parent) not in ("", "."):
+                    directories.append(candidate.parent)
+                # 裸文件名或指定目录里找不到时，回落到附件目录
+                directories.append(Path(settings.attachment_dir))
+
+                for directory in directories:
+                    if not directory.is_dir():
+                        continue
+                    found = _find_in_directory(directory, candidate)
+                    if found is not None:
+                        chosen = found
+                        break
+                if chosen is not None:
+                    break
 
         if chosen is not None:
             resolved.append(str(chosen))
-            substitutions.append("%s → %s" % (original.name, chosen.name))
+            # 只在**文件名真的变了**时提示。剥引号/去空格不算变化——
+            # 否则会打印出「"示例报表.csv" → 示例报表.csv」这种看起来
+            # 换了文件、实际只是少了个引号的提示，反而让人困惑。
+            requested_name = Path(stripped).name if stripped else original.name
+            if chosen.name != requested_name:
+                substitutions.append("%s → %s" % (requested_name, chosen.name))
         else:
             missing.append(str(original))
 

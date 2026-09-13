@@ -282,6 +282,98 @@ def test_unrelated_filename_is_still_rejected(tools, fake_smtp, tmp_path):
     assert result["reason"] == "missing_attachment"
 
 
+# ---------------------------------------------------------------------------
+# 裸文件名与带引号的路径
+# ---------------------------------------------------------------------------
+
+def test_bare_filename_resolves_against_attachment_dir(
+    tools, fake_smtp, tmp_path, monkeypatch
+):
+    """
+    回归测试：模型只回一个裸文件名时，必须到附件目录里去找。
+
+    系统提示词已经把附件目录的真实文件名列给了模型，模型很自然地只回
+    `示例报表.csv`。但裸文件名的 parent 是「当前工作目录」而不是附件目录，
+    于是这个**确实存在**的文件被判为不存在，整封邮件发不出去——
+    用户看到的是「附件不存在」，而附件明明就在附件目录里。
+
+    修复前实测：success=False, reason=missing_attachment。
+    """
+    import email_tools
+
+    (tmp_path / "示例报表.csv").write_text("a,b\n1,2", encoding="utf-8")
+    monkeypatch.setattr(email_tools.settings, "attachment_dir", tmp_path)
+
+    result = tools.sender.send_email_sync(
+        "a@b.com", "s", "b", attachments=["示例报表.csv"]
+    )
+
+    assert result["success"] is True, "裸文件名应能在附件目录里找到"
+    assert result["attachments"] == [str(tmp_path / "示例报表.csv")]
+
+
+def test_bare_filename_with_guessed_extension_is_recovered(
+    tools, fake_smtp, tmp_path, monkeypatch
+):
+    """裸文件名 + 猜错扩展名，两个缺陷叠加时也要能找回。"""
+    import email_tools
+
+    (tmp_path / "示例报表.csv").write_text("a,b\n1,2", encoding="utf-8")
+    monkeypatch.setattr(email_tools.settings, "attachment_dir", tmp_path)
+
+    result = tools.sender.send_email_sync(
+        "a@b.com", "s", "b", attachments=["示例报表.xlsx"]
+    )
+    assert result["success"] is True
+    assert result["attachments"] == [str(tmp_path / "示例报表.csv")]
+
+
+@pytest.mark.parametrize(
+    "quoted",
+    [
+        '"{}"',          # 半角双引号
+        "'{}'",          # 半角单引号
+        "“{}”",          # 中文弯引号
+        "「{}」",         # 中文书名号
+        "  {}  ",        # 前后带空格
+    ],
+)
+def test_quoted_paths_are_accepted(tools, fake_smtp, tmp_path, quoted):
+    """
+    回归测试：路径两端带引号是模型的常见写法，必须能容忍。
+
+    引号在 Windows 上是**合法文件名字符**，所以 `is_file()` 会判定失败，
+    一个本来完全正确的路径被误报成「附件不存在」。
+    """
+    real = tmp_path / "照片.jpg"
+    real.write_bytes(b"\xff\xd8\xff\xe0" + b"x" * 100)
+
+    result = tools.sender.send_email_sync(
+        "a@b.com", "s", "b", attachments=[quoted.format(real)]
+    )
+    assert result["success"] is True, "带引号的路径应被接受"
+    assert result["attachments"] == [str(real)]
+
+
+def test_quoting_alone_is_not_reported_as_substitution(
+    tools, fake_smtp, tmp_path
+):
+    """
+    只是引号/空格被剥掉，不该提示「附件名已自动修正」。
+
+    否则用户会看到「"示例报表.csv" → 示例报表.csv」，
+    看起来像换了文件，实际什么都没变。
+    """
+    real = tmp_path / "示例报表.csv"
+    real.write_text("x", encoding="utf-8")
+
+    result = tools.sender.send_email_sync(
+        "a@b.com", "s", "b", attachments=['"%s"' % real]
+    )
+    assert result["success"] is True
+    assert "note" not in result, "文件名没变时不应有替换说明"
+
+
 def test_normalize_stem_strips_suffix_words():
     from email_tools import _normalize_stem
 
