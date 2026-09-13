@@ -41,4 +41,4 @@ def test_non_sensitive_fields_have_defaults():
     s = Settings(_env_file=None, smtp_email="a@b.com", smtp_password="x")
     assert s.smtp_server == "smtp.qq.com"
     assert s.smtp_port == 465
-    assert s.mcp_host == "0.0.0.0"
+    assert s.mcp_host == "127.0.0.1"

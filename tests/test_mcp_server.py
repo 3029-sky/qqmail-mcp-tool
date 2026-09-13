@@ -36,6 +36,22 @@ def test_app():
     return create_app()
 
 
+def _auth_headers() -> dict:
+    """
+    客户端连接时该带的请求头——**从真实配置读**，不写死。
+
+    `.env.test` 里配了 MCP_AUTH_TOKEN，服务端因此要求鉴权。
+    如果这里不带上，本文件所有协议用例都会 401。
+
+    刻意从配置读而不是硬编码令牌：这样一旦「服务端要鉴权、客户端不发令牌」
+    的接线再断掉，这些用例会立刻失败——它们同时也在验证那条链路。
+    """
+    from config import settings
+
+    token = (settings.mcp_auth_token or "").strip()
+    return {"Authorization": "Bearer %s" % token} if token else {}
+
+
 @asynccontextmanager
 async def in_process_client(app):
     """直接与应用对话的 httpx 客户端（不发真实网络请求）。"""
@@ -59,11 +75,19 @@ async def mcp_client_for(app):
         read, write, _ = await stack.enter_async_context(
             sh_client.streamablehttp_client(
                 "http://testserver/mcp",
+                headers=_auth_headers(),
                 # 工厂必须返回「尚未打开」的客户端：
                 # streamablehttp_client 内部会自行 async with client。
-                httpx_client_factory=lambda **_: httpx.AsyncClient(
+                #
+                # 注意 headers 必须转发：SDK 是
+                # `httpx_client_factory(headers=headers, timeout=...)` 调用的，
+                # 早先用 `lambda **_:` 把它丢掉了 —— 于是鉴权头根本没到
+                # HTTP 层，所有协议用例 401。这是测试的 bug，不是产品的。
+                httpx_client_factory=lambda **kwargs: httpx.AsyncClient(
                     transport=transport,
                     base_url="http://testserver",
+                    headers=kwargs.get("headers"),
+                    timeout=kwargs.get("timeout"),
                     # ASGITransport 默认不跟随重定向，
                     # 而 Mount("/mcp") 会把路径规范化为 /mcp/
                     follow_redirects=True,

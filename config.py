@@ -25,7 +25,11 @@ class Settings(BaseSettings):
     smtp_password: str
 
     # MCP服务器配置
-    mcp_host: str = "0.0.0.0"
+    #: 监听地址。**默认只监听回环**，因为默认没有设置访问令牌——
+    #: 若默认对外监听，同一局域网内任何人都能调用 /mcp 用你的邮箱发信。
+    #: 需要让别的机器接入时，改成 0.0.0.0 并**同时**设置 MCP_AUTH_TOKEN。
+    #: （这条默认值修过一次：原来默认 0.0.0.0 且无令牌，等于开箱即裸奔。）
+    mcp_host: str = "127.0.0.1"
     mcp_port: int = 8000
     debug: bool = True
 
