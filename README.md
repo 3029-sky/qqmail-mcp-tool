@@ -53,7 +53,7 @@
 | **SMTP 连接复用** | 专用工作线程独占连接，实测 5 封邮件仅建立 1 条 TLS 连接 |
 | **结构化日志** | 可选单行 JSON 输出，便于日志系统采集 |
 | **发送指标** | 成功率、延迟分位数、失败原因分布，经 `/metrics` 暴露 |
-| **零外部依赖的测试** | 替换 SMTP/IMAP 层与注入替身，243 个用例不联网、不碰真实邮箱、约 3.5 秒跑完 |
+| **零外部依赖的测试** | 替换 SMTP/IMAP 层与注入替身，245 个用例不联网、不碰真实邮箱、约 3.5 秒跑完 |
 
 ---
 
@@ -111,11 +111,16 @@
 ### 1. 环境要求
 
 - Python 3.11+
-- [Ollama](https://ollama.com)（仅智能体客户端需要）
+- [Ollama](https://ollama.com)（仅对话管家 `email_butler.py` 需要）
+
+> **`venv/` 不在仓库里**（体积大且与平台相关）。克隆后必须自己建环境，
+> 否则下面命令里的 `venv\Scripts\python.exe` 不存在。
 
 ### 2. 安装
 
 ```bash
+cd <你克隆项目的目录>/qqmail-mcp-tool
+
 python -m venv venv
 venv\Scripts\activate          # Windows
 # source venv/bin/activate     # macOS / Linux
@@ -137,6 +142,16 @@ copy .env.example .env          # Windows
 获取授权码：登录 QQ 邮箱网页版 → 设置 → 账户 →
 开启「IMAP/SMTP 服务」→ 生成 16 位授权码。
 授权码只显示一次，请立即保存到 `.env`。
+
+> ⚠️ **只想跑测试、暂时没有 QQ 授权码**时，可以先用占位配置：
+>
+> ```bash
+> copy .env.test .env      # 只有假数据，测试全程不发起真实请求
+> python -m pytest -q      # 应看到 245 passed
+> ```
+>
+> `SMTP_EMAIL` 与 `SMTP_PASSWORD` 是**必填**项，两者都缺失时测试会在
+> 收集阶段就抛 `ValidationError` —— 这不是环境坏了，只是还没配置。
 
 ### 4. 启动 MCP 服务器
 
@@ -366,7 +381,7 @@ python -m pytest -q         # 精简输出
 python -m pytest tests/test_email_tools.py -v
 ```
 
-套件共 243 个用例，**全程不发起真实网络请求**：
+套件共 245 个用例，**全程不发起真实网络请求**：
 
 | 文件 | 关注点 |
 |---|---|
@@ -730,7 +745,7 @@ qqmail-mcp-tool/
 ├── .env.example             # 配置模板（可提交）
 ├── .env.test                # CI 用占位配置
 ├── .github/workflows/tests.yml
-├── tests/                   # 243 个用例
+├── tests/                   # 245 个用例
 │   ├── conftest.py
 │   ├── test_config.py
 │   ├── test_auth.py

@@ -20,11 +20,11 @@
      而不是只给一句结论，便于判断它是真发了还是在敷衍。
   4. **缺依赖时讲人话**：Ollama 没起、模型没拉，会给出可直接照抄的命令。
 
-它也是项目**唯一**的对话客户端：MCP 协议层本身（五个工具、握手、会话）
+它也是项目**唯一**的对话客户端：MCP 协议层本身（四个工具、握手、会话）
 由 mcp_server.py 提供，任何合规 MCP 客户端都能接入。
 
 前置条件：
-  - Ollama 已启动，且已拉取模型（默认 qwen2.5:3b）
+  - Ollama 已启动，且已拉取模型（默认 qwen2.5:3b，可在 .env 中改）
   - MCP 服务器由本程序自动启动，无需手动操作
 
 运行：
@@ -42,6 +42,8 @@ from typing import Any, List, Optional
 
 import httpx
 
+from config import settings
+
 ROOT = Path(__file__).resolve().parent
 
 MCP_HOST = "127.0.0.1"
@@ -49,8 +51,10 @@ MCP_PORT = 8000
 MCP_URL = "http://%s:%d/mcp" % (MCP_HOST, MCP_PORT)
 HEALTH_URL = "http://%s:%d/health" % (MCP_HOST, MCP_PORT)
 
-OLLAMA_BASE_URL = "http://localhost:11434"
-OLLAMA_MODEL = "qwen2.5:3b"
+#: Ollama 地址与模型名从配置读取（即 .env 生效）。
+#: 早期版本把它们写死在这里，导致 MANUAL 里教的 `OLLAMA_MODEL=qwen2.5:7b` 根本不生效。
+OLLAMA_BASE_URL = settings.ollama_base_url
+OLLAMA_MODEL = settings.ollama_model
 
 #: 交给智能体的历史消息上限，避免越聊越长拖慢每轮推理
 MAX_HISTORY_MESSAGES = 24
@@ -301,8 +305,6 @@ class EmailButler:
         from langchain.agents import create_agent
         from langchain_mcp_adapters.client import MultiServerMCPClient
         from langchain_ollama import ChatOllama
-
-        from config import settings
 
         problem = check_ollama()
         if problem:

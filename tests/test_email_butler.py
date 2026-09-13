@@ -122,6 +122,67 @@ def test_check_ollama_no_models_at_all(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# 配置来源
+# ---------------------------------------------------------------------------
+
+def test_ollama_config_comes_from_settings(monkeypatch):
+    """
+    回归测试：管家必须从配置读 Ollama 地址与模型名，而不是写死在代码里。
+
+    早期版本把它们硬编码为常量，于是 MANUAL 里教的
+    `OLLAMA_MODEL=qwen2.5:7b` 完全不生效——用户按文档改了 .env 却毫无变化，
+    这类「文档教了但代码不认」的缺陷最难自查。
+
+    注意：`config.settings` 是模块级单例，光 reload email_butler 不够，
+    必须连 config 一起 reload 才能让它重新读取环境变量。
+    """
+    import importlib
+
+    import config
+    import email_butler
+
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen2.5:7b")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://192.168.1.9:11434")
+    importlib.reload(config)
+    importlib.reload(email_butler)
+
+    try:
+        assert email_butler.OLLAMA_MODEL == "qwen2.5:7b", "模型名应取自配置"
+        assert email_butler.OLLAMA_BASE_URL == "http://192.168.1.9:11434", "地址应取自配置"
+    finally:
+        # 收尾：把 config 与 email_butler 都还原成真实配置，避免污染后续用例
+        importlib.reload(config)
+        importlib.reload(email_butler)
+
+
+def test_check_ollama_uses_configured_model(monkeypatch):
+    """
+    模型名可配置后，「缺模型」的提示必须跟着变——
+    否则换了模型却仍提示去 pull 默认模型，等于给了错误的修复命令。
+    """
+    import importlib
+
+    import config
+    import email_butler
+
+    monkeypatch.setenv("OLLAMA_MODEL", "llama3:8b")
+    importlib.reload(config)
+    importlib.reload(email_butler)
+
+    try:
+        monkeypatch.setattr(
+            email_butler.httpx, "get",
+            lambda *a, **k: _Resp({"models": [{"name": "qwen2.5:3b"}]}),
+        )
+        problem = email_butler.check_ollama()
+        assert problem is not None
+        assert "llama3:8b" in problem, "应提示拉取当前配置的模型"
+    finally:
+        importlib.reload(config)
+        importlib.reload(email_butler)
+
+
+# ---------------------------------------------------------------------------
 # 服务器探活
 # ---------------------------------------------------------------------------
 

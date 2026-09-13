@@ -4,13 +4,18 @@
 # 真实配置：包含 QQ 邮箱授权码，只存在于本机
 .env
 .env.*
-# CI 会把 .env.test 复制成 .env 来跑测试
-!.env.example
-!.env.test
 # 保险：任何目录下的 .env 变体
 **/.env
 **/.env.local
 **/.env.production
+
+# 例外：这两个只含占位符，必须进仓库
+#   .env.example —— 新用户照着它创建 .env
+#   .env.test    —— CI 与本地自检把它复制成 .env，否则 Settings 校验失败
+# 注意：否定规则必须放在**所有**忽略规则之后。git 不回溯：
+# 若某目录已被更早的规则忽略，后面的 ! 无法把它重新纳入。
+!.env.example
+!.env.test
 
 # 运行时生成的 JSON 附件可能含邮箱等个人信息，默认不入库
 # （示例配置由 create_attachments.py 生成，可随时重建）
@@ -53,8 +58,8 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
-# CI 会把 .env.test 复制成 .env 来跑测试，复制产物不入库
-.env.test
+# （.env.test 本身需要入库，见文件顶部的例外说明；
+#   CI 复制出的产物名为 .env，已被上面的规则覆盖）
 
 # ============================================================
 # IDE / 编辑器

@@ -32,6 +32,18 @@
 | QQ 邮箱 | 一个 QQ 邮箱账号，并开启 SMTP 服务 |
 | 网络 | 能访问 `smtp.qq.com` / `imap.qq.com` |
 
+> ⚠️ **`venv/` 不在仓库里**（体积大且与平台相关）。别人克隆项目后
+> **必须先自己建环境**，否则 `.\venv\Scripts\python.exe` 找不到：
+>
+> ```powershell
+> cd <你克隆项目的目录>\qqmail-mcp-tool
+> python -m venv venv
+> .\venv\Scripts\python.exe -m pip install -r requirements.txt
+> .\venv\Scripts\python.exe -m pip install -r requirements-dev.txt   # 跑测试才需要
+> ```
+>
+> 详细说明见 `README.md` 的「快速开始」。
+
 检查 Ollama 是否可用：
 
 ```powershell
@@ -53,10 +65,10 @@ ollama pull qwen2.5:3b
 
 ### 第 1 步：确认凭据
 
-项目根目录应有 `.env` 文件。若没有，从模板创建：
+项目根目录应有 `.env` 文件。若没有，从模板创建（**先切到项目目录**）：
 
 ```powershell
-cd E:\rise\qqmail\qqmail-mcp-tool
+cd <你克隆项目的目录>\qqmail-mcp-tool
 copy .env.example .env
 ```
 
@@ -87,8 +99,19 @@ SMTP_PASSWORD=16位授权码
 .\venv\Scripts\python.exe -m pytest -q
 ```
 
-看到 `243 passed` 说明环境完好。**这一步不需要网络、不碰邮箱**，
+看到 `245 passed` 说明环境完好。**这一步不需要网络、不碰邮箱**，
 是最快的环境自检方式。
+
+> ⚠️ **前提：`.env` 必须已经存在**（第 1 步）。
+> `SMTP_EMAIL` / `SMTP_PASSWORD` 是必填配置项，缺失时测试会在**收集阶段**
+> 就抛 `ValidationError`。刚克隆项目、还没建 `.env` 时，
+> 可以先复制一份占位配置来跑测试：
+>
+> ```powershell
+> copy .env.test .env      # 只有占位假数据，测试全程不发真实请求
+> ```
+>
+> 之后再按第 1 步填入你自己的邮箱与授权码。
 
 ---
 
@@ -97,7 +120,7 @@ SMTP_PASSWORD=16位授权码
 ### 启动
 
 ```powershell
-cd E:\rise\qqmail\qqmail-mcp-tool
+cd <你克隆项目的目录>\qqmail-mcp-tool
 .\venv\Scripts\python.exe email_butler.py
 ```
 
@@ -386,7 +409,7 @@ ollama pull qwen2.5:3b
 用命令行运行能看到具体错误：
 
 ```powershell
-cd E:\rise\qqmail\qqmail-mcp-tool
+cd <你克隆项目的目录>\qqmail-mcp-tool
 .\venv\Scripts\python.exe email_butler.py
 ```
 
@@ -444,12 +467,18 @@ MCP_AUTH_TOKEN=刚生成的令牌
 
 ### 换更大的模型
 
+在 `.env` 中改这一项，**重启管家后生效**：
+
 ```ini
 OLLAMA_MODEL=qwen2.5:7b
 ```
 
 需要先 `ollama pull qwen2.5:7b`。模型越大越能正确理解意图、
-越少乱猜附件名，但需要更多内存/显存。
+越少乱猜附件名，但需要更多内存/显存（3B 约需 3–5 GB 空闲内存）。
+
+> 管家在启动时读取 `OLLAMA_MODEL`。若提示「Ollama 中找不到模型」，
+> 按提示执行 `ollama pull <你配置的模型名>` 即可 —— 提示里的模型名
+> 就是 `.env` 中当前配置的那个。
 
 ---
 
