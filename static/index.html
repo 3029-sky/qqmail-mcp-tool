@@ -4,8 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>信使鸟 · 邮件管家</title>
-<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
-<link rel="apple-touch-icon" href="/static/logo.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/butler-icon-32.png">
+<link rel="icon" type="image/png" sizes="64x64" href="/static/butler-icon-64.png">
+<link rel="apple-touch-icon" href="/static/butler-icon.png">
 <style>
   /* ============================================================
      主题变量
@@ -219,6 +220,8 @@
     width: 26px; height: 26px;
     flex: 0 0 26px;
     display: block;
+    border-radius: 50%;
+    object-fit: cover;
   }
   .brand { font-weight: 600; font-size: 14px; white-space: nowrap; }
   .from-addr {
@@ -258,7 +261,7 @@
     font-size: 14px; background: var(--bg-raise);
     overflow: hidden;
   }
-  .avatar img { width: 100%; height: 100%; object-fit: contain; }
+  .avatar img { width: 100%; height: 100%; object-fit: cover; }
   .bubble {
     max-width: 84%;
     padding: 10px 13px;
@@ -361,13 +364,19 @@
   /* ---------- 首屏引导 ---------- */
   .welcome { text-align: center; padding: 40px 10px; }
   .welcome-logo {
-    width: 72px; height: 72px;
+    /* 比顶栏大得多：这张是立绘，缩到 26px 会糊成一团，
+       这里给它 132px 才看得出画的是什么。 */
+    width: 132px; height: 132px;
     /* 显式居中：img 是行内元素，靠父级 text-align 居中虽然有效，
        但父级一旦改成 flex 就会失效——写死更省心。 */
     display: block;
-    margin: 0 auto 12px;
-    /* 深色主题下给一点光晕，让标识从深底上浮起来 */
-    filter: drop-shadow(0 4px 14px rgba(76,141,255,.28));
+    margin: 0 auto 16px;
+    /* 立绘自带一个淡紫色的圆底，所以这里裁成圆形，与它自然衔接；
+       再补一圈描边，让它在浅色与深色底上都有轮廓。 */
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    object-fit: cover;
+    box-shadow: 0 6px 24px rgba(20, 25, 45, .22);
   }
   .welcome h2 { font-size: 19px; margin: 0 0 8px; font-weight: 600; }
   .welcome p { color: var(--text-dim); font-size: 13px; margin: 0 0 22px; }
@@ -611,7 +620,8 @@
   <main class="main">
     <header class="topbar">
       <button class="btn icon" id="toggleSide" title="隐藏附件栏">«</button>
-      <img class="logo-img" src="/static/logo.svg" alt="信使鸟" title="信使鸟">
+      <img class="logo-img" src="/static/butler-icon.png" alt="信使鸟" title="信使鸟"
+           onerror="this.onerror=null;this.src='/static/logo.svg'">
       <span class="brand">信使鸟</span>
       <span class="from-addr" id="fromAddr"></span>
       <span class="spacer"></span>
@@ -634,7 +644,8 @@
     <div class="chat" id="chat">
       <div class="chat-inner" id="chatInner">
         <div class="welcome" id="welcome">
-          <img class="welcome-logo" src="/static/logo.svg" alt="信使鸟">
+          <img class="welcome-logo" src="/static/butler.png" alt="信使鸟"
+               onerror="this.onerror=null;this.src='/static/logo.svg'">
           <h2>我是信使鸟，帮你送信</h2>
           <p>说人话就行。要发图片或压缩包，直接 <b>Ctrl+V</b> 粘贴进来。</p>
           <div class="examples">
@@ -1074,8 +1085,11 @@ function addMessage(role, text) {
     avatar.textContent = "🧑";
   } else {
     const img = document.createElement("img");
-    img.src = "/static/logo.svg";
+    img.src = "/static/butler-icon.png";
     img.alt = "信使鸟";
+    // 立绘是本机素材、不进仓库（见 static/ASSETS.md），
+    // 别人克隆后加载不到，就退回随仓库分发的原创 SVG
+    img.onerror = () => { img.onerror = null; img.src = "/static/logo.svg"; };
     avatar.appendChild(img);
   }
 
