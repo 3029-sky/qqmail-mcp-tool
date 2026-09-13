@@ -507,6 +507,55 @@ async def test_chat_rejects_empty_text(client, fake_session):
     assert resp.status_code == 400
 
 
+async def test_chat_passes_template_as_structure(client, fake_session):
+    """
+    模板的主题与收件人要作为**结构化说明**传给模型，而不是拼成一句话。
+
+    修之前实测的坏情况（正文与指令拼在一起、让模型再拆开）：
+      - 正文含「主题：」时，模型把正文里的那行当成主题
+      - 正文含换行时，正文后半段可能被丢掉
+    现在主题与收件人由代码明确给出，模型不需要猜边界在哪。
+    """
+    resp = await client.post("/api/chat", json={
+        "text": "核对结果如下：\n主题：季度报表\n备注：已确认",
+        "template": {"name": "数据核对", "subject": "核对结果", "to": ""},
+    })
+    assert resp.status_code == 200
+
+    sent = fake_session.agent.seen[0][0]
+    content = sent[1] if isinstance(sent, tuple) else str(sent)
+
+    assert "模板" in content, "要说明这是模板带来的"
+    assert "核对结果" in content, "模板主题要明确给出"
+    assert "季度报表" in content, "正文本身仍要在（它来自用户那句话）"
+
+
+async def test_chat_template_hint_does_not_duplicate_body(client, fake_session):
+    """
+    模板正文**不重复传**——它已经在用户那句话里了。
+
+    重复传会让模型以为要发两份，或者纠结用哪一份。
+    """
+    resp = await client.post("/api/chat", json={
+        "text": "请准时参加。",
+        "template": {"name": "开会通知", "subject": "明天九点开会", "to": ""},
+    })
+    assert resp.status_code == 200
+
+    sent = fake_session.agent.seen[0][0]
+    content = sent[1] if isinstance(sent, tuple) else str(sent)
+    assert content.count("请准时参加") == 1, "正文被重复传了"
+
+
+async def test_chat_without_template_has_no_hint(client, fake_session):
+    """没用模板时不该出现模板说明。"""
+    resp = await client.post("/api/chat", json={"text": "发封邮件"})
+    assert resp.status_code == 200
+    sent = fake_session.agent.seen[0][0]
+    content = sent[1] if isinstance(sent, tuple) else str(sent)
+    assert "模板" not in content
+
+
 async def test_chat_reports_error_event(client, monkeypatch):
     """模型环节出错要作为 error 事件推给界面，而不是让连接无声中断。"""
     import butler_core

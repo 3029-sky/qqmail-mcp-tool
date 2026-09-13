@@ -55,7 +55,7 @@
 | **SMTP 连接复用** | 专用工作线程独占连接，实测 5 封邮件仅建立 1 条 TLS 连接 |
 | **结构化日志** | 可选单行 JSON 输出，便于日志系统采集 |
 | **发送指标** | 成功率、延迟分位数、失败原因分布，经 `/metrics` 暴露 |
-| **零外部依赖的测试** | 替换 SMTP/IMAP 层与注入替身，495 个用例不联网、不碰真实邮箱、约 5 秒跑完 |
+| **零外部依赖的测试** | 替换 SMTP/IMAP 层与注入替身，503 个用例不联网、不碰真实邮箱、约 5 秒跑完 |
 
 ---
 
@@ -151,7 +151,7 @@ copy .env.example .env          # Windows
 >
 > ```bash
 > copy .env.test .env      # 只有假数据，测试全程不发起真实请求
-> python -m pytest -q      # 应看到 495 passed
+> python -m pytest -q      # 应看到 503 passed
 > ```
 >
 > `SMTP_EMAIL` 与 `SMTP_PASSWORD` 是**必填**项，两者都缺失时测试会在
@@ -488,7 +488,7 @@ python -m pytest -q         # 精简输出
 python -m pytest tests/test_email_tools.py -v
 ```
 
-套件共 495 个用例，**全程不发起真实网络请求**：
+套件共 503 个用例，**全程不发起真实网络请求**：
 
 | 文件 | 关注点 |
 |---|---|
@@ -869,7 +869,7 @@ qqmail-mcp-tool/
 ├── .env.example             # 配置模板（可提交）
 ├── .env.test                # CI 用占位配置
 ├── .github/workflows/tests.yml
-├── tests/                   # 495 个用例
+├── tests/                   # 503 个用例
 │   ├── conftest.py
 │   ├── test_config.py
 │   ├── test_auth.py

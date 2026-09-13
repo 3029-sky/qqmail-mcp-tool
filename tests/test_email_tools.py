@@ -7,6 +7,7 @@
   - 各异步包装方法是否把参数正确传递给同步核心
 """
 
+import asyncio
 import email
 import smtplib
 from email.header import decode_header, make_header
@@ -434,6 +435,99 @@ def test_normalize_stem_strips_suffix_words():
 
     assert _normalize_stem("示例报表表.xlsx") == _normalize_stem("示例报表.csv")
     assert _normalize_stem("示例报表文件.txt") == _normalize_stem("示例报表.csv")
+
+
+# ---------------------------------------------------------------------------
+# HTML 邮件的签名
+# ---------------------------------------------------------------------------
+
+def test_html_email_body_gets_signature(fake_smtp, isolated_signature):
+    """
+    回归测试：HTML 邮件的**正文**里必须有签名。
+
+    修之前实测的坏情况：签名被追加到纯文本回退内容上
+    （「这是一封HTML邮件…」那段），而 HTML 正文里没有签名——
+    于是收到 HTML 邮件的人根本看不到签名。
+    """
+    from email_tools import QQMailTools
+
+    asyncio.run(QQMailTools().send_html_email(
+        to_email="a@b.com", subject="主题", html_body="<p>HTML 正文</p>"))
+
+    html = _html_part(fake_smtp.last_instance.sent_messages[-1][2])
+    assert "HTML 正文" in html
+    assert "—— 李四" in html, "HTML 正文里应带上签名"
+
+
+def test_html_signature_escapes_special_characters(fake_smtp, isolated_signature):
+    """
+    签名里的尖括号必须转义。
+
+    签名是用户自己填的，不能假设它不含 HTML 特殊字符。
+    不转义时「研发部 <技术组>」会被当标签解析，轻则显示错乱、重则整段消失。
+    """
+    from email_tools import QQMailTools
+    from userdata import userdata
+
+    userdata.set_signature("—— 李四\n研发部 <技术组>")
+
+    asyncio.run(QQMailTools().send_html_email(
+        to_email="a@b.com", subject="主题", html_body="<p>正文</p>"))
+
+    html = _html_part(fake_smtp.last_instance.sent_messages[-1][2])
+    assert "&lt;技术组&gt;" in html
+    assert "<技术组>" not in html, "未转义的尖括号会被当成标签"
+
+
+def test_html_signature_not_duplicated(fake_smtp, isolated_signature):
+    """模型已经写了签名时不应再加一个——与纯文本路径同一套规则。"""
+    from email_tools import QQMailTools
+
+    asyncio.run(QQMailTools().send_html_email(
+        to_email="a@b.com", subject="主题",
+        html_body="<p>正文</p>\n—— 李四"))
+
+    html = _html_part(fake_smtp.last_instance.sent_messages[-1][2])
+    assert html.count("李四") == 1, "签名重复了"
+
+
+def test_html_signature_converts_newlines_to_br(fake_smtp, isolated_signature):
+    """多行签名在 HTML 里要换行，否则会挤成一行。"""
+    from email_tools import QQMailTools
+    from userdata import userdata
+
+    userdata.set_signature("—— 李四\n13800000000")
+
+    asyncio.run(QQMailTools().send_html_email(
+        to_email="a@b.com", subject="主题", html_body="<p>正文</p>"))
+
+    html = _html_part(fake_smtp.last_instance.sent_messages[-1][2])
+    assert "<br>" in html
+
+
+def test_html_email_without_signature_is_unchanged(fake_smtp, isolated_signature):
+    """没设签名时不该改动 HTML 正文。"""
+    from email_tools import QQMailTools
+    from userdata import userdata
+
+    userdata.set_signature("")
+
+    asyncio.run(QQMailTools().send_html_email(
+        to_email="a@b.com", subject="主题", html_body="<p>原样正文</p>"))
+
+    html = _html_part(fake_smtp.last_instance.sent_messages[-1][2])
+    assert html.strip() == "<p>原样正文</p>"
+
+
+def _html_part(raw):
+    """从假 SMTP 记录下来的 MIME 字符串里取出 text/html 部分。"""
+    msg = email.message_from_string(raw)
+    for part in msg.walk():
+        if part.get_content_type() == "text/html":
+            payload = part.get_payload(decode=True)
+            if payload:
+                return payload.decode("utf-8", "replace")
+    return ""
     assert _normalize_stem("Report.PDF") == _normalize_stem("report.csv")
     assert _normalize_stem("A B.txt") == _normalize_stem("ab.md")
 

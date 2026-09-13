@@ -316,6 +316,10 @@
     cursor: pointer; font-size: 13px; line-height: 1; padding: 0 2px;
   }
   .chip button:hover { color: var(--err); }
+  .tpl-chip {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
 
   .input-row { display: flex; gap: 9px; align-items: flex-end; }
   textarea {
@@ -468,6 +472,27 @@
   .batch-item.ok  { color: var(--ok); }
   .batch-item.bad { color: var(--err); }
 
+  /* ---------- 主题直选菜单 ---------- */
+  .theme-menu {
+    position: fixed; z-index: 70;
+    min-width: 132px;
+    background: var(--bg-raise);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 4px;
+    box-shadow: var(--shadow);
+  }
+  .theme-item {
+    display: block; width: 100%;
+    text-align: left;
+    padding: 7px 10px;
+    background: none; border: 0; border-radius: 6px;
+    color: var(--text); font: inherit; font-size: 12.5px;
+    cursor: pointer;
+  }
+  .theme-item:hover { background: var(--bg-soft); }
+  .theme-item.active { color: var(--accent); font-weight: 600; }
+
   /* ---------- 提示条 ---------- */
   .toasts {
     position: fixed; right: 18px; bottom: 18px;
@@ -610,6 +635,7 @@
 
     <div class="composer">
       <div class="composer-inner">
+        <div class="chips" id="templateChip" style="display:none"></div>
         <div class="chips" id="chips"></div>
         <div class="input-row">
           <textarea id="input" rows="1"
@@ -679,6 +705,7 @@
 </div>
 
 <div class="toasts" id="toasts"></div>
+<div class="theme-menu" id="themeMenu" style="display:none"></div>
 
 <!-- ==================== 设置对话框 ==================== -->
 <div class="overlay" id="settingsOverlay">
@@ -796,6 +823,8 @@ async function api(path, options = {}) {
    ============================================================ */
 // 本轮对话要附带的文件（粘贴或选择进来的）
 let pending = [];
+// 本轮要用的邮件模板（结构化，不是拼出来的文字）
+let pendingTemplate = null;
 let busy = false;
 
 /* ============================================================
@@ -1128,20 +1157,34 @@ async function send() {
   if (!text && pending.length) {
     text = "把 " + pending.map(p => p.name).join("、") + " 发给我自己";
   }
-  if (!text && !pending.length) return;
+  // 只挂模板没说话时也一样：用模板的收件人，没有就发给自己
+  if (!text && pendingTemplate) {
+    text = pendingTemplate.to
+      ? "发给" + pendingTemplate.to
+      : "把模板内容发给我自己";
+  }
+  if (!text && !pending.length && !pendingTemplate) return;
+
+  // 界面上回显时把模板也显示出来，否则用户看到的和实际发出的不一致
+  const shown = pendingTemplate
+    ? text + "\n\n📝 使用模板「" + pendingTemplate.name + "」"
+    : text;
 
   busy = true;
   $("send").disabled = true;
   box.value = "";
   autoGrow();
 
-  addMessage("user", text);
+  addMessage("user", shown);
   const working = showWorking();
 
   // 当前这一轮涉及的附件名：让模型明确知道发哪个
   const attachNames = pending.map(p => p.name);
+  const templateForTurn = pendingTemplate;
   pending = [];
+  pendingTemplate = null;
   renderChips();
+  renderTemplateChip();
 
   let actions = null;
   let finalText = "";
@@ -1150,7 +1193,11 @@ async function send() {
     const resp = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, attachments: attachNames }),
+      body: JSON.stringify({
+        text,
+        attachments: attachNames,
+        template: templateForTurn || null,
+      }),
     });
 
     if (!resp.ok) {
@@ -1434,10 +1481,44 @@ function initTheme() {
 $("btnTheme").onclick = () => {
   const current = readThemeChoice();
   const next = THEMES[(THEMES.indexOf(current) + 1) % THEMES.length];
-  try { localStorage.setItem(THEME_KEY, next); } catch (_) {}
-  applyTheme(next);
-  toast("主题：" + THEME_LABEL[next], "ok");
+  setTheme(next);
 };
+
+/* 右键（或长按）直接选，不用循环点。
+   循环切换两档以上就要点好几次，而且每次都得看提示才知道到了哪一档。 */
+$("btnTheme").oncontextmenu = (ev) => {
+  ev.preventDefault();
+  const menu = $("themeMenu");
+  menu.innerHTML = "";
+
+  const current = readThemeChoice();
+  for (const choice of THEMES) {
+    const item = document.createElement("button");
+    item.className = "theme-item" + (choice === current ? " active" : "");
+    item.textContent = (choice === current ? "● " : "　") + THEME_LABEL[choice];
+    item.onclick = () => { setTheme(choice); closeThemeMenu(); };
+    menu.appendChild(item);
+  }
+
+  // 贴着按钮下方弹出，并保证不超出窗口右边界
+  const rect = $("btnTheme").getBoundingClientRect();
+  menu.style.display = "block";
+  const width = menu.offsetWidth || 140;
+  menu.style.left = Math.min(rect.left, window.innerWidth - width - 8) + "px";
+  menu.style.top = (rect.bottom + 4) + "px";
+
+  setTimeout(() => document.addEventListener("click", closeThemeMenu, { once: true }), 0);
+};
+
+function closeThemeMenu() {
+  $("themeMenu").style.display = "none";
+}
+
+function setTheme(choice) {
+  try { localStorage.setItem(THEME_KEY, choice); } catch (_) {}
+  applyTheme(choice);
+  toast("主题：" + THEME_LABEL[choice], "ok");
+}
 
 /* ============================================================
    侧栏分页
@@ -1580,16 +1661,59 @@ function renderTemplates() {
   }
 }
 
-/** 把模板内容填进输入框，让用户能看到、能改，再决定发送。 */
+/** 挂上模板。
+ *
+ *  设计折中：**正文放进输入框**（你能看到、能改措辞），
+ *  但**主题与收件人走结构化传递**，不拼进那句话里。
+ *
+ *  为什么不把三者都拼成一句话：实测那样是有损的——正文含「主题：」时
+ *  模型会把正文里的那行当成主题；正文含换行时后半段可能被丢掉。
+ *  为什么不把正文也只放 chip 里：那样你看不到要发什么，改不了措辞。
+ *  所以：正文可见可改，主题与收件人由代码给出，模型不需要猜边界。
+ */
 function useTemplate(t) {
-  const parts = [];
-  if (t.to) parts.push("发给" + t.to);
-  if (t.subject) parts.push("主题：" + t.subject);
-  if (t.body) parts.push(t.body);
-  $("input").value = parts.join("，");
+  pendingTemplate = {
+    name: t.name,
+    subject: t.subject || "",
+    to: t.to || "",
+  };
+
+  // 正文填进输入框，保留用户已经打的内容（放在前面，读起来像指令）
+  const body = t.body || "";
+  const box = $("input");
+  const existing = box.value.trim();
+  box.value = existing ? existing + "\n" + body : body;
   autoGrow();
-  $("input").focus();
-  toast("已填入模板「" + t.name + "」，确认后按 Enter 发送", "ok");
+
+  renderTemplateChip();
+  box.focus();
+  toast("已套用模板「" + t.name + "」——正文可以直接改，按 Enter 发送", "ok");
+}
+
+function renderTemplateChip() {
+  const box = $("templateChip");
+  box.innerHTML = "";
+  if (!pendingTemplate) { box.style.display = "none"; return; }
+
+  box.style.display = "flex";
+  const chip = document.createElement("span");
+  chip.className = "chip tpl-chip";
+
+  const label = document.createElement("span");
+  label.textContent = "📝 模板：" + pendingTemplate.name;
+  label.title =
+    "主题：" + (pendingTemplate.subject || "（未设）") + "\n" +
+    "收件人：" + (pendingTemplate.to || "（未设，将发给你自己）") + "\n" +
+    "正文已在输入框里，可以直接改";
+  chip.appendChild(label);
+
+  const del = document.createElement("button");
+  del.textContent = "×";
+  del.title = "取消使用模板";
+  del.onclick = () => { pendingTemplate = null; renderTemplateChip(); };
+  chip.appendChild(del);
+
+  box.appendChild(chip);
 }
 
 $("btnAddContact").onclick = async () => {

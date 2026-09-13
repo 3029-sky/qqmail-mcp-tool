@@ -413,6 +413,31 @@ def describe_oversize(oversize: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def append_signature_to_html(html_body: str, signature: str) -> str:
+    """
+    把纯文本签名转成 HTML 段落追加到 HTML 正文末尾。
+
+    为什么要转义：签名里出现 `<`、`&` 这类字符时（例如「张三 <研发部>」），
+    直接拼进 HTML 会被当成标签解析，轻则显示错乱，重则整段消失。
+    签名是用户自己的内容，不能假设它不含特殊字符。
+
+    幂等：签名已在正文里就不再追加——与纯文本路径同一套规则，
+    否则模型自己写了一次、这里又加一次，用户收到两个签名。
+    """
+    signature = (signature or "").strip()
+    if not signature:
+        return html_body
+    body = html_body or ""
+    if signature in body:
+        return body
+
+    from html import escape
+
+    lines = [escape(line) for line in signature.splitlines()]
+    block = "<p style=\"white-space:pre-line;margin-top:16px\">%s</p>" % "<br>".join(lines)
+    return body + block
+
+
 def build_message(
     to_email: Union[str, List[str]],
     subject: str,
@@ -926,7 +951,15 @@ class QQMailTools:
         bcc: Optional[List[str]] = None,
         idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """发送 HTML 邮件（附带纯文本回退）。"""
+        """
+        发送 HTML 邮件（附带纯文本回退）。
+
+        签名要**单独加到 HTML 正文**：发送层追加签名时操作的是纯文本 body，
+        而 HTML 邮件里那个 body 只是给不支持 HTML 的客户端看的回退内容。
+        结果就是收件人在 HTML 邮件里根本看不到签名——实测确认过。
+        """
+        from userdata import userdata
+
         text_body = (
             "这是一封HTML邮件，如果您的邮件客户端不支持HTML，"
             "请使用支持HTML的客户端查看。"
@@ -936,7 +969,7 @@ class QQMailTools:
             to_email=to_email,
             subject=subject,
             body=text_body,
-            html_body=html_body,
+            html_body=append_signature_to_html(html_body, userdata.get_signature()),
             cc=cc,
             bcc=bcc,
             idempotency_key=idempotency_key,

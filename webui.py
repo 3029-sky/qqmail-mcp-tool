@@ -414,6 +414,31 @@ def validate_smtp_input(values: Dict[str, str]) -> List[str]:
     return problems
 
 
+def compose_template_hint(template: Dict[str, Any]) -> str:
+    """
+    把模板的**主题与收件人**整理成一段明确说明。
+
+    正文**不在这里**：它已经在输入框的文字里了。重复传一次会让模型
+    以为要发两份，也可能让它纠结用哪一份。
+
+    主题与收件人必须单独给出，因为它们是「用户的意图」而不是「正文内容」——
+    实测把三者拼成一句话时，正文含「主题：」会把主题带偏，
+    正文含换行时后半段还可能被丢掉。
+    """
+    lines = ["（用户套用了邮件模板「%s」，请使用下面的主题与收件人："
+             % str(template.get("name") or "未命名")]
+    if template.get("to"):
+        lines.append("  收件人：%s" % str(template["to"])[:200])
+    else:
+        lines.append("  收件人：模板里没设，按用户在对话里说的来")
+    if template.get("subject"):
+        lines.append("  主题：%s" % str(template["subject"])[:200])
+    else:
+        lines.append("  主题：模板里没设，按用户在对话里说的来")
+    lines.append("  正文：就是用户这句话的内容，原样使用，不要改写。）")
+    return "\n".join(lines)
+
+
 @app.get("/api/config")
 async def api_get_config():
     """
@@ -775,6 +800,16 @@ async def api_chat(payload: Dict[str, Any]):
     names = [str(n) for n in (payload or {}).get("attachments") or [] if n]
     if names:
         text = "%s\n\n（本轮要作为附件发送的文件：%s）" % (text, "、".join(names))
+
+    # 模板作为**结构化意图**传给模型，而不是把主题/正文拼成一句话让它再拆开。
+    #
+    # 为什么必须结构化：拼成一句话再让模型拆，是**有损**的。实测两种坏情况：
+    #   1. 正文含「主题：」时，模型可能把正文里的那行当成主题
+    #   2. 正文含换行时，指令与正文混在一起，模型可能丢掉后半段
+    # 用「粘贴模板」这个说法把三者分开，模型不需要猜边界在哪。
+    template = (payload or {}).get("template") or {}
+    if isinstance(template, dict) and (template.get("subject") or template.get("to")):
+        text = "%s\n\n%s" % (text, compose_template_hint(template))
 
     if state.busy.locked():
         raise HTTPException(status_code=409, detail="正在处理上一轮，请稍候")

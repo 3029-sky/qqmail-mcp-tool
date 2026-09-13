@@ -149,6 +149,23 @@ QQ_SPECIAL_RESPONSE = smtplib.SMTPResponseException(-1, b"\x00\x00\x00")
 
 
 @pytest.fixture
+def isolated_signature(tmp_path, monkeypatch):
+    """
+    用一个临时签名，不碰项目真实的 data/userdata.json。
+
+    签名会影响**每一封**邮件的正文，所以任何改它的用例都必须隔离——
+    否则一次签名测试会让后续所有断言正文的用例都变得依赖执行顺序。
+    """
+    import userdata as module
+    from userdata import UserData
+
+    store = UserData(tmp_path / "userdata.json")
+    store.set_signature("—— 李四")
+    monkeypatch.setattr(module, "userdata", store)
+    return store
+
+
+@pytest.fixture
 def fake_smtp(monkeypatch):
     """
     把 smtplib.SMTP_SSL 替换成 FakeSMTPServer。
