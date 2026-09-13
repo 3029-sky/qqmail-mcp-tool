@@ -416,12 +416,15 @@ def test_prompt_template_has_no_stray_placeholders():
 
     用 string.Formatter 解析字段名——正则 \\{(\\w+)\\} 会把
     {settings.smtp_email} 拆成两个合法单词，从而漏判。
+
+    注意：真正组装提示词的是 butler_core.build_system_prompt()，
+    它提供的字段就是下面这个白名单。加了新占位符必须同步这里。
     """
     import string
 
     from email_butler import SYSTEM_PROMPT_TEMPLATE
 
-    allowed = {"email", "attach_dir", "attach_list"}
+    allowed = {"email", "attach_dir", "attach_list", "contact_list", "signature_note"}
     names = set()
     for _literal, field, _spec, _conv in string.Formatter().parse(
         SYSTEM_PROMPT_TEMPLATE
@@ -446,10 +449,76 @@ def test_prompt_template_renders_with_expected_values():
         email="me@example.com",
         attach_dir=r"C:\data",
         attach_list="  - a.txt",
+        contact_list="  - 张三：zhangsan@example.com",
+        signature_note="",
     )
     assert "me@example.com" in rendered
     assert "a.txt" in rendered
     assert "{" not in rendered, "渲染后不应残留花括号"
+
+
+def test_build_system_prompt_includes_contacts(monkeypatch, tmp_path):
+    """
+    联系人名单要进提示词。
+
+    否则用户说「发给张三」时，模型只能凭空编一个地址——
+    而这正是提示词第 5 条明令禁止的事。
+    """
+    import butler_core
+    import userdata as userdata_module
+    from userdata import UserData
+
+    store = UserData(tmp_path / "u.json")
+    store.add_contact("张三", "zhangsan@example.com", note="同事")
+    # build_system_prompt 里是模块级 `from userdata import userdata`，
+    # 所以要打桩 userdata 模块上的那个实例。
+    monkeypatch.setattr(userdata_module, "userdata", store)
+
+    prompt = butler_core.build_system_prompt("me@qq.com", tmp_path, ["a.txt"])
+    assert "张三" in prompt
+    assert "zhangsan@example.com" in prompt
+
+
+def test_build_system_prompt_has_no_signature_note_when_unset(monkeypatch, tmp_path):
+    """没设签名时不该出现「不要重复写签名」那段——那会浪费上下文并让模型困惑。"""
+    import butler_core
+    import userdata as userdata_module
+    from userdata import UserData
+
+    monkeypatch.setattr(userdata_module, "userdata", UserData(tmp_path / "u.json"))
+
+    prompt = butler_core.build_system_prompt("me@qq.com", tmp_path, [])
+    assert "关于签名" not in prompt
+
+
+def test_build_system_prompt_warns_model_when_signature_set(monkeypatch, tmp_path):
+    """
+    设了签名时必须明确告诉模型**不要再写一遍**。
+
+    否则它常会自己补一个签名，而发送层也会追加一个，用户收到两个。
+    """
+    import butler_core
+    import userdata as userdata_module
+    from userdata import UserData
+
+    store = UserData(tmp_path / "u.json")
+    store.set_signature("—— 李四")
+    monkeypatch.setattr(userdata_module, "userdata", store)
+
+    prompt = butler_core.build_system_prompt("me@qq.com", tmp_path, [])
+    assert "关于签名" in prompt
+    assert "不要在 body 里再写签名" in prompt
+
+
+def test_build_system_prompt_handles_empty_contacts(monkeypatch, tmp_path):
+    import butler_core
+    import userdata as userdata_module
+    from userdata import UserData
+
+    monkeypatch.setattr(userdata_module, "userdata", UserData(tmp_path / "u.json"))
+
+    prompt = butler_core.build_system_prompt("me@qq.com", tmp_path, [])
+    assert "还没有保存联系人" in prompt
 
 
 def test_prompt_requires_immediate_execution():

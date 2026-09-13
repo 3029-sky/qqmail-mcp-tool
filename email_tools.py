@@ -649,6 +649,13 @@ class QQMailSender:
                 )
 
         try:
+            # 签名在**发送层**追加，而不是靠模型自己记得写。
+            # 放在这里的好处：无论谁调用（管家、脚本、MCP 客户端），
+            # 签名行为完全一致；而且 with_signature 是幂等的，
+            # 模型已经写了签名也不会变成两个。
+            from userdata import userdata
+
+            body = userdata.with_signature(body)
             msg = build_message(to_email, subject, body, html_body, attachments, cc)
         except MissingAttachmentError as e:
             # 兜底：解析后仍缺失（例如解析与构建之间文件被删）

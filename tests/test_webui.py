@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+import batch
 import webui
 
 
@@ -711,3 +712,167 @@ async def test_config_test_endpoint_does_not_accept_credentials(client, fake_env
     # 不管结果如何，都不该因为「传了凭据」而改变行为；
     # 这里只断言它没有把这些凭据写进配置
     assert fake_env.as_dict()["SMTP_EMAIL"] == "old@qq.com"
+
+
+# ---------------------------------------------------------------------------
+# 联系人 / 模板 / 签名
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def fake_userdata(tmp_path, monkeypatch):
+    """
+    把用户数据指到临时文件。
+
+    与 fake_env 同理：绝不能写进项目真实的 data/userdata.json。
+    """
+    import userdata as module
+    from userdata import UserData
+
+    store = UserData(tmp_path / "userdata.json")
+    monkeypatch.setattr(module, "userdata", store)
+    # webui 里是 `from userdata import userdata`，也要换掉
+    monkeypatch.setattr(webui, "userdata", store)
+    return store
+
+
+async def test_userdata_starts_empty(client, fake_userdata):
+    data = (await client.get("/api/userdata")).json()
+    assert data == {"contacts": [], "templates": [], "signature": ""}
+
+
+async def test_add_and_list_contact(client, fake_userdata):
+    resp = await client.post("/api/contacts", json={
+        "name": "张三", "email": "zs@example.com", "note": "同事",
+    })
+    assert resp.status_code == 200
+
+    contacts = (await client.get("/api/userdata")).json()["contacts"]
+    assert contacts[0]["name"] == "张三"
+    assert contacts[0]["email"] == "zs@example.com"
+
+
+@pytest.mark.parametrize("payload, keyword", [
+    ({"name": "", "email": "a@b.com"}, "姓名"),
+    ({"name": "张三", "email": "不是邮箱"}, "邮箱"),
+])
+async def test_add_contact_validates(client, fake_userdata, payload, keyword):
+    """地址编错了邮件发不出去，且报错很难懂，所以在入口拦住。"""
+    resp = await client.post("/api/contacts", json=payload)
+    assert resp.status_code == 400
+    assert keyword in resp.json()["detail"]
+
+
+async def test_remove_contact(client, fake_userdata):
+    await client.post("/api/contacts", json={"name": "张三", "email": "zs@b.com"})
+    resp = await client.delete("/api/contacts/%E5%BC%A0%E4%B8%89")
+    assert resp.status_code == 200
+    assert (await client.get("/api/userdata")).json()["contacts"] == []
+
+
+async def test_remove_missing_contact_returns_404(client, fake_userdata):
+    resp = await client.delete("/api/contacts/%E4%B8%8D%E5%AD%98%E5%9C%A8")
+    assert resp.status_code == 404
+
+
+async def test_add_and_remove_template(client, fake_userdata):
+    resp = await client.post("/api/templates", json={
+        "name": "开会通知", "subject": "明天九点开会", "body": "请准时参加。",
+    })
+    assert resp.status_code == 200
+
+    templates = (await client.get("/api/userdata")).json()["templates"]
+    assert templates[0]["name"] == "开会通知"
+
+    resp = await client.delete("/api/templates/%E5%BC%80%E4%BC%9A%E9%80%9A%E7%9F%A5")
+    assert resp.status_code == 200
+
+
+async def test_template_requires_name(client, fake_userdata):
+    resp = await client.post("/api/templates", json={"name": "  "})
+    assert resp.status_code == 400
+
+
+async def test_set_signature(client, fake_userdata):
+    resp = await client.put("/api/signature", json={"signature": "—— 张三"})
+    assert resp.status_code == 200
+    assert (await client.get("/api/userdata")).json()["signature"] == "—— 张三"
+
+
+# ---------------------------------------------------------------------------
+# 批量发送
+# ---------------------------------------------------------------------------
+
+async def test_batch_limits_exposes_safety_bounds(client, fake_userdata):
+    """
+    界面要能提前知道能发多少、最少等多久。
+
+    否则用户会自己猜一个节奏，而猜错的代价是当天发不出邮件。
+    """
+    data = (await client.get("/api/batch/limits")).json()
+    assert data["max_batch"] == batch.MAX_BATCH
+    assert data["min_interval"] == batch.MIN_INTERVAL
+
+
+def parse_sse_events(text):
+    events = []
+    for block in text.split("\n\n"):
+        for line in block.split("\n"):
+            if line.startswith("data:"):
+                events.append(json.loads(line[5:].strip()))
+    return events
+
+
+async def test_batch_dry_run_does_not_send(client, fake_userdata):
+    """预览绝不发信——这是「先看名单再发」的前提。"""
+    resp = await client.post("/api/batch", json={
+        "recipients": ["a@example.com", "b@example.com"],
+        "subject": "主题", "body": "正文", "dry_run": True,
+    })
+    assert resp.status_code == 200
+
+    events = parse_sse_events(resp.text)
+    assert [e["type"] for e in events] == ["plan", "done"]
+    assert events[0]["count"] == 2
+    assert events[-1]["dry_run"] is True
+
+
+async def test_batch_rejects_over_limit(client, fake_userdata):
+    resp = await client.post("/api/batch", json={
+        "recipients": ["u%d@b.com" % i for i in range(batch.MAX_BATCH + 5)],
+        "subject": "主题", "body": "正文", "dry_run": True,
+    })
+    assert resp.status_code == 400
+    assert "最多" in resp.json()["detail"]
+
+
+async def test_batch_rejects_empty_body(client, fake_userdata):
+    resp = await client.post("/api/batch", json={
+        "recipients": ["a@b.com"], "subject": "主题", "body": "  ", "dry_run": True,
+    })
+    assert resp.status_code == 400
+
+
+async def test_batch_resolves_contact_names(client, fake_userdata):
+    """界面只传联系人姓名，由后端解析成地址——避免前端自己拼错。"""
+    await client.post("/api/contacts", json={"name": "张三", "email": "zs@example.com"})
+
+    resp = await client.post("/api/batch", json={
+        "recipients": ["张三"], "subject": "主题", "body": "正文", "dry_run": True,
+    })
+    assert resp.status_code == 200
+    plan = parse_sse_events(resp.text)[0]
+    assert plan["recipients"][0]["email"] == "zs@example.com"
+
+
+async def test_batch_never_writes_real_userdata(client, fake_userdata):
+    """回归测试：批量接口不能碰到项目真实的 data/userdata.json。"""
+    import userdata as module
+
+    real = module.UserData.__init__.__globals__["__file__"]
+    real_path = Path(real).resolve().parent / "data" / "userdata.json"
+    before = real_path.read_bytes() if real_path.is_file() else None
+
+    await client.post("/api/contacts", json={"name": "测试", "email": "t@b.com"})
+
+    after = real_path.read_bytes() if real_path.is_file() else None
+    assert after == before, "测试写到了真实的 userdata.json"

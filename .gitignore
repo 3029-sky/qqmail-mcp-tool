@@ -17,9 +17,18 @@
 !.env.example
 !.env.test
 
-# 运行时生成的 JSON 附件可能含邮箱等个人信息，默认不入库
-# （示例配置由 create_attachments.py 生成，可随时重建）
-attachments/*.json
+# 运行时放进来的附件可能含个人信息（合同、照片、报表），不入库。
+# 示例附件由 create_attachments.py 生成，需要时重新生成即可，
+# 因此这里直接忽略全部，不用逐类列举。
+#
+# 注意：git 对**已跟踪**文件不生效，所以曾经提交过的示例附件
+# 需要先 `git rm --cached` 才会被忽略。
+attachments/*
+!attachments/.gitkeep
+
+# 用户的联系人、邮件模板与签名（userdata.py 读写）。
+# 这些是个人数据，不该进仓库；格式变化时也不该产生无意义的 diff。
+data/
 
 # ============================================================
 # 虚拟环境 —— 不要提交，用 requirements.txt 重建

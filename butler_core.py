@@ -27,6 +27,8 @@ from config import settings
 __all__ = [
     "TOOL_LABELS",
     "SYSTEM_PROMPT_TEMPLATE",
+    "SIGNATURE_NOTE",
+    "build_system_prompt",
     "MAX_HISTORY_MESSAGES",
     "MCP_URL",
     "HEALTH_URL",
@@ -86,15 +88,21 @@ TOOL_LABELS = {
 SYSTEM_PROMPT_TEMPLATE = """你是用户的邮件管家，名字叫「小邮」。你能调用工具帮用户发邮件。
 
 当前用户的邮箱是：{email}
+联系人名单（「发给名单里的人」时用这里的地址）：
+{contact_list}
 附件目录：{attach_dir}
 附件目录里现有的文件：
 {attach_list}
-
+{signature_note}
 最重要的一条：
 用户说了要发邮件，你就必须**立即调用工具把它真正发出去**。
 不允许先反问确认再等用户回复——用户已经说清楚了就直接做。
 （实测发现：只要提示词里留了「可以先问一下」的余地，小模型就会一直反问，
  结果一封邮件都发不出去。）
+
+关于联系人：
+- 用户说的人名如果在上面名单里，就用名单里的邮箱地址，**不要自己编**。
+- 名单里没有这个人时，请照第 5 条处理（询问），不要猜地址。
 
 关于附件（务必遵守）：
 - attachment_paths 只能填**上面列表里真实存在的文件**，或用户在消息里给出的完整路径。
@@ -116,6 +124,43 @@ SYSTEM_PROMPT_TEMPLATE = """你是用户的邮件管家，名字叫「小邮」�
    不要凭空编造收件人。
 6. 调用工具后，用一句话说明结果：发给了谁、主题是什么、有没有带附件。
 7. 中文回答、简洁、口语化，不要罗列步骤。"""
+
+#: 签名已经由发送层自动追加时，加进提示词的一段说明。
+#: 不告诉模型的话，它常会自己再写一遍签名，用户就收到两个。
+SIGNATURE_NOTE = """
+关于签名：
+- 签名已经由系统自动加到正文末尾，**你绝对不要在 body 里再写签名**。
+- 也不要在回答里说「已加上签名」之外多余的话。
+"""
+
+
+def build_system_prompt(email: str, attach_dir, attach_list: List[str]) -> str:
+    """
+    组装系统提示词。
+
+    联系人名单与签名说明都从这里注入——提示词的每一段都有对应测试，
+    单独一个函数便于断言「该有的约束都在」。
+    """
+    from userdata import userdata
+
+    contacts = userdata.load()["contacts"]
+    if contacts:
+        lines = []
+        for item in contacts[:200]:        # 名单过长会挤占上下文，截断
+            note = ("（%s）" % item["note"]) if item.get("note") else ""
+            lines.append("  - %s：%s%s" % (item["name"], item["email"], note))
+        contact_list = "\n".join(lines)
+    else:
+        contact_list = "  （还没有保存联系人）"
+
+    signature = userdata.get_signature().strip()
+    return SYSTEM_PROMPT_TEMPLATE.format(
+        email=email,
+        contact_list=contact_list,
+        attach_dir=attach_dir,
+        attach_list=attach_list,
+        signature_note=SIGNATURE_NOTE if signature else "",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -614,20 +659,17 @@ class AgentSession:
         chat = build_chat_model(ref)
         provider, name = parse_ref(ref)
 
-        # 把附件目录的真实内容写进提示词，避免模型凭空拼出不存在的路径。
-        # 换模型时一并重建提示词：附件目录可能已经有变化了。
+        # 换模型时一并重建提示词：附件目录、联系人、签名都可能已经变了。
         attach_dir = Path(settings.attachment_dir)
         files = list_attachments(attach_dir)
-        attach_list = (
-            "\n".join("  - %s" % n for n in files) if files else "  （目录为空）"
-        )
 
         self.agent = create_agent(
-            chat, self.tools, system_prompt=SYSTEM_PROMPT_TEMPLATE.format(
+            chat, self.tools,
+            system_prompt=build_system_prompt(
                 email=settings.smtp_email,
                 attach_dir=attach_dir,
-                attach_list=attach_list,
-            )
+                attach_list=files,
+            ),
         )
         self.model = ref
         self.provider = provider

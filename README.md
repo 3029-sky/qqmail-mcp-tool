@@ -55,7 +55,7 @@
 | **SMTP 连接复用** | 专用工作线程独占连接，实测 5 封邮件仅建立 1 条 TLS 连接 |
 | **结构化日志** | 可选单行 JSON 输出，便于日志系统采集 |
 | **发送指标** | 成功率、延迟分位数、失败原因分布，经 `/metrics` 暴露 |
-| **零外部依赖的测试** | 替换 SMTP/IMAP 层与注入替身，407 个用例不联网、不碰真实邮箱、约 5 秒跑完 |
+| **零外部依赖的测试** | 替换 SMTP/IMAP 层与注入替身，495 个用例不联网、不碰真实邮箱、约 5 秒跑完 |
 
 ---
 
@@ -151,7 +151,7 @@ copy .env.example .env          # Windows
 >
 > ```bash
 > copy .env.test .env      # 只有假数据，测试全程不发起真实请求
-> python -m pytest -q      # 应看到 407 passed
+> python -m pytest -q      # 应看到 495 passed
 > ```
 >
 > `SMTP_EMAIL` 与 `SMTP_PASSWORD` 是**必填**项，两者都缺失时测试会在
@@ -488,7 +488,7 @@ python -m pytest -q         # 精简输出
 python -m pytest tests/test_email_tools.py -v
 ```
 
-套件共 407 个用例，**全程不发起真实网络请求**：
+套件共 495 个用例，**全程不发起真实网络请求**：
 
 | 文件 | 关注点 |
 |---|---|
@@ -499,6 +499,8 @@ python -m pytest tests/test_email_tools.py -v
 | `tests/test_idempotency.py` | **幂等键**：重复请求不再发送、TTL 过期、卡死占用回收 |
 | `tests/test_butler_core.py` | **共用后端**：回复提取（不取错工具返回）、事件转换、流式顺序、历史累积与截断、模型引用解析 |
 | `tests/test_envfile.py` | **.env 读写**：保留注释、原子写、脱敏读、白名单、CRLF 保持 |
+| `tests/test_userdata.py` | **联系人/模板/签名**：损坏文件不崩、校验、签名幂等、并发不丢数据 |
+| `tests/test_batch.py` | **批量发送**：整批拒绝非法地址、上限与间隔下限、失败即中止、取消生效、dry_run 不发信 |
 | `tests/test_email_butler.py` | **终端界面**：多轮记忆、只显示本轮动作、`/粘贴` 指令、GBK 下的输出加固 |
 | `tests/test_webui.py` | **网页后端**：路径穿越防护、上传落盘、SSE 事件顺序、配置保存即时生效与凭据不泄露 |
 | `tests/test_open_window.py` | **窗口启动器**：`--app` 与 `--user-data-dir` 参数拼装、找不到浏览器时的降级 |
@@ -853,6 +855,8 @@ qqmail-mcp-tool/
 ├── email_butler.py          # 终端界面（自动起服务器 + 多轮记忆）
 ├── clipboard.py             # 剪贴板导入（终端 /粘贴 指令：图片与文件）
 ├── envfile.py               # .env 读写（应用内改配置：保留注释、原子写、脱敏读）
+├── userdata.py              # 联系人 / 邮件模板 / 签名（与配置分开存）
+├── batch.py                 # 批量发送（强制间隔、数量上限、失败即中止）
 ├── 启动应用.bat              # 双击启动图形界面（仅含 ASCII）
 ├── 启动管家.bat              # 双击启动终端界面（仅含 ASCII）
 ├── create_attachments.py    # 生成示例附件（报表/纪要/配置）
@@ -865,7 +869,7 @@ qqmail-mcp-tool/
 ├── .env.example             # 配置模板（可提交）
 ├── .env.test                # CI 用占位配置
 ├── .github/workflows/tests.yml
-├── tests/                   # 407 个用例
+├── tests/                   # 495 个用例
 │   ├── conftest.py
 │   ├── test_config.py
 │   ├── test_auth.py
@@ -878,6 +882,8 @@ qqmail-mcp-tool/
 │   ├── test_open_window.py
 │   ├── test_clipboard.py
 │   ├── test_envfile.py
+│   ├── test_userdata.py
+│   ├── test_batch.py
 │   ├── test_email_tools.py
 │   ├── test_mcp_server.py
 │   └── test_tool_defs.py

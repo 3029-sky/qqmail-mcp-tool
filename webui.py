@@ -23,6 +23,7 @@
 
 import argparse
 import asyncio
+import contextlib
 import json
 import mimetypes
 import os
@@ -39,9 +40,11 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import butler_core
+import batch
 from clipboard import ClipboardItem, import_clipboard, is_supported as clipboard_supported
 from config import settings
 from envfile import RESTART_KEYS, SECRET_KEYS, EnvFile
+from userdata import UserDataError, userdata
 
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
@@ -526,6 +529,211 @@ async def api_test_config(payload: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="连接测试失败：%s" % str(e)[:300])
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# 联系人 / 模板 / 签名
+# ---------------------------------------------------------------------------
+
+@app.get("/api/userdata")
+async def api_get_userdata():
+    """
+    返回联系人、模板与签名。
+
+    这些是**内容**（不是凭据），所以直接回明文——界面要能编辑它们。
+    与 `.env` 的处理刻意不同：那边连长度都只回给界面看。
+    """
+    data = userdata.load()
+    return {
+        "contacts": data["contacts"],
+        "templates": data["templates"],
+        "signature": data["signature"],
+    }
+
+
+@app.post("/api/contacts")
+async def api_add_contact(payload: Dict[str, Any]):
+    try:
+        item = userdata.add_contact(
+            (payload or {}).get("name", ""),
+            (payload or {}).get("email", ""),
+            (payload or {}).get("note", ""),
+        )
+    except UserDataError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    await _refresh_agent_prompt()
+    return {"ok": True, "contact": item, "contacts": userdata.load()["contacts"]}
+
+
+@app.delete("/api/contacts/{name}")
+async def api_remove_contact(name: str):
+    if not userdata.remove_contact(name):
+        raise HTTPException(status_code=404, detail="联系人不存在：%s" % name)
+    await _refresh_agent_prompt()
+    return {"ok": True, "contacts": userdata.load()["contacts"]}
+
+
+@app.post("/api/templates")
+async def api_add_template(payload: Dict[str, Any]):
+    try:
+        item = userdata.add_template(
+            (payload or {}).get("name", ""),
+            (payload or {}).get("subject", ""),
+            (payload or {}).get("body", ""),
+            (payload or {}).get("to", ""),
+        )
+    except UserDataError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "template": item, "templates": userdata.load()["templates"]}
+
+
+@app.delete("/api/templates/{name}")
+async def api_remove_template(name: str):
+    if not userdata.remove_template(name):
+        raise HTTPException(status_code=404, detail="模板不存在：%s" % name)
+    return {"ok": True, "templates": userdata.load()["templates"]}
+
+
+@app.put("/api/signature")
+async def api_set_signature(payload: Dict[str, Any]):
+    text = userdata.set_signature((payload or {}).get("signature", ""))
+    await _refresh_agent_prompt()
+    return {"ok": True, "signature": text}
+
+
+async def _refresh_agent_prompt() -> bool:
+    """
+    联系人/签名变了要重建智能体，否则它在本次会话里还用旧名单。
+
+    重点是**不重载凭据**（不碰 SMTP），所以失败也不影响发信——
+    因此这里吞掉异常，只在启动日志里留一行。
+    """
+    if state.session is None or state.session.agent is None:
+        return False
+    if state.busy.locked():
+        # 正在对话时不动它，下一轮自然会带上新名单
+        state.log("联系人/签名已更新，将在下次切换模型或重启后生效")
+        return False
+    try:
+        await state.session.use_model(butler_core.active_ref(), on_step=state.log)
+        return True
+    except Exception as e:  # noqa: BLE001
+        state.log("提示词刷新失败（不影响发信）：%s" % str(e)[:80])
+        return False
+
+
+# ---------------------------------------------------------------------------
+# 批量发送
+# ---------------------------------------------------------------------------
+
+#: 批量发送的中止标记。同一时刻只允许一个批量任务，所以用一个全局事件足够。
+_cancel_batch = threading.Event()
+
+
+@app.get("/api/batch/limits")
+async def api_batch_limits():
+    """把安全边界告诉界面，让用户在点之前就知道能发多少、要等多久。"""
+    return {
+        "max_batch": batch.MAX_BATCH,
+        "default_interval": batch.DEFAULT_INTERVAL,
+        "min_interval": batch.MIN_INTERVAL,
+        "contacts": userdata.load()["contacts"],
+    }
+
+
+@app.post("/api/batch")
+async def api_batch(payload: Dict[str, Any]):
+    """
+    批量发送，用 SSE 逐条汇报进度。
+
+    dry_run=true 时只返回预览（收件人名单与预计耗时），**不发送任何邮件**。
+    界面上「先看名单再发」是默认动作——批量发错范围比单发错得厉害得多。
+    """
+    body = payload or {}
+    dry_run = bool(body.get("dry_run", True))
+
+    # 收件人可以直接给地址，也可以给联系人名单（{"name":...}），
+    # 后者从 userdata 里解析——这样界面只需传名字。
+    raw = body.get("recipients") or []
+    resolved: List[Any] = []
+    for item in raw:
+        if isinstance(item, str):
+            contact = userdata.resolve_recipient(item)
+            resolved.append(contact if contact else item)
+        else:
+            resolved.append(item)
+
+    try:
+        plan = batch.plan_batch(
+            resolved,
+            body.get("subject", ""),
+            body.get("body", ""),
+            attach_names=body.get("attachments") or [],
+            interval=body.get("interval", batch.DEFAULT_INTERVAL),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if state.busy.locked():
+        raise HTTPException(status_code=409, detail="正在处理其他任务，请稍候")
+
+    async def event_stream():
+        def send(event: Dict[str, Any]) -> str:
+            return "data: %s\n\n" % json.dumps(event, ensure_ascii=False)
+
+        async with state.busy:
+            if not dry_run:
+                _cancel_batch.clear()
+                try:
+                    await state.ensure_started()
+                except Exception as e:  # noqa: BLE001
+                    state.error = str(e)[:500]
+                    yield send({"type": "error", "text": state.error})
+                    return
+
+            queue: "asyncio.Queue[Dict[str, Any]]" = asyncio.Queue()
+
+            def on_event(event: Dict[str, Any]) -> None:
+                queue.put_nowait(event)
+
+            task = asyncio.create_task(batch.run_batch(
+                plan,
+                dry_run=dry_run,
+                on_event=on_event,
+                is_cancelled=_cancel_batch.is_set,
+            ))
+
+            # 一边跑一边把事件推出去，而不是等全部结束——
+            # 批量可能要跑几分钟，看不到进度用户只会以为卡死了。
+            try:
+                while True:
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=0.5)
+                    except asyncio.TimeoutError:
+                        if task.done():
+                            break
+                        continue
+                    yield send(event)
+                    if event["type"] == "done":
+                        break
+            finally:
+                if not task.done():
+                    _cancel_batch.set()
+                with contextlib.suppress(Exception):
+                    await task
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/batch/cancel")
+async def api_batch_cancel():
+    """中止批量发送。已经在发的那一封会发完，之后的都停。"""
+    _cancel_batch.set()
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
