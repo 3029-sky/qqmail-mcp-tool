@@ -3,7 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>邮件管家</title>
+<title>信使鸟 · 邮件管家</title>
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+<link rel="apple-touch-icon" href="/static/logo.svg">
 <style>
   /* ============================================================
      主题变量
@@ -213,6 +215,11 @@
     flex: 0 0 auto;
   }
   .logo { font-size: 17px; }
+  .logo-img {
+    width: 26px; height: 26px;
+    flex: 0 0 26px;
+    display: block;
+  }
   .brand { font-weight: 600; font-size: 14px; white-space: nowrap; }
   .from-addr {
     font-size: 12px; color: var(--text-mute);
@@ -249,7 +256,9 @@
     width: 30px; height: 30px; flex: 0 0 30px;
     border-radius: 50%; display: grid; place-items: center;
     font-size: 14px; background: var(--bg-raise);
+    overflow: hidden;
   }
+  .avatar img { width: 100%; height: 100%; object-fit: contain; }
   .bubble {
     max-width: 84%;
     padding: 10px 13px;
@@ -351,6 +360,15 @@
 
   /* ---------- 首屏引导 ---------- */
   .welcome { text-align: center; padding: 40px 10px; }
+  .welcome-logo {
+    width: 72px; height: 72px;
+    /* 显式居中：img 是行内元素，靠父级 text-align 居中虽然有效，
+       但父级一旦改成 flex 就会失效——写死更省心。 */
+    display: block;
+    margin: 0 auto 12px;
+    /* 深色主题下给一点光晕，让标识从深底上浮起来 */
+    filter: drop-shadow(0 4px 14px rgba(76,141,255,.28));
+  }
   .welcome h2 { font-size: 19px; margin: 0 0 8px; font-weight: 600; }
   .welcome p { color: var(--text-dim); font-size: 13px; margin: 0 0 22px; }
   .examples { display: flex; flex-direction: column; gap: 8px; max-width: 460px; margin: 0 auto; }
@@ -593,8 +611,8 @@
   <main class="main">
     <header class="topbar">
       <button class="btn icon" id="toggleSide" title="隐藏附件栏">«</button>
-      <span class="logo">📬</span>
-      <span class="brand">邮件管家</span>
+      <img class="logo-img" src="/static/logo.svg" alt="信使鸟" title="信使鸟">
+      <span class="brand">信使鸟</span>
       <span class="from-addr" id="fromAddr"></span>
       <span class="spacer"></span>
       <div class="model-picker">
@@ -616,7 +634,8 @@
     <div class="chat" id="chat">
       <div class="chat-inner" id="chatInner">
         <div class="welcome" id="welcome">
-          <h2>我是小邮，帮你发邮件</h2>
+          <img class="welcome-logo" src="/static/logo.svg" alt="信使鸟">
+          <h2>我是信使鸟，帮你送信</h2>
           <p>说人话就行。要发图片或压缩包，直接 <b>Ctrl+V</b> 粘贴进来。</p>
           <div class="examples">
             <button class="example" data-text="给我自己发封邮件，主题是周末安排，正文说周六上午十点碰面">
@@ -1051,7 +1070,14 @@ function addMessage(role, text) {
 
   const avatar = document.createElement("div");
   avatar.className = "avatar";
-  avatar.textContent = role === "user" ? "🧑" : "📬";
+  if (role === "user") {
+    avatar.textContent = "🧑";
+  } else {
+    const img = document.createElement("img");
+    img.src = "/static/logo.svg";
+    img.alt = "信使鸟";
+    avatar.appendChild(img);
+  }
 
   const bubble = document.createElement("div");
   bubble.className = "bubble";
@@ -1134,7 +1160,7 @@ function showWorking() {
   const wrap = document.createElement("div");
   wrap.className = "working";
   wrap.id = "working";
-  wrap.innerHTML = '<span class="dots"><i></i><i></i><i></i></span><span>小邮正在处理…</span>';
+  wrap.innerHTML = '<span class="dots"><i></i><i></i><i></i></span><span>信使鸟正在处理…</span>';
   $("chatInner").appendChild(wrap);
   scrollDown();
   return wrap;

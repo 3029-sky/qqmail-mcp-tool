@@ -85,7 +85,7 @@ TOOL_LABELS = {
     "check_email_config": "检查邮箱配置",
 }
 
-SYSTEM_PROMPT_TEMPLATE = """你是用户的邮件管家，名字叫「小邮」。你能调用工具帮用户发邮件。
+SYSTEM_PROMPT_TEMPLATE = """你是用户的邮件管家，名字叫「信使鸟」。你能调用工具帮用户发邮件。
 
 当前用户的邮箱是：{email}
 联系人名单（「发给名单里的人」时用这里的地址）：

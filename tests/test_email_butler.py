@@ -741,7 +741,7 @@ def test_banner_survives_gbk_encoding():
 
     encoded = BANNER.encode("gbk", errors="replace")   # 不应抛异常
     assert b"?" in encoded, "emoji 应被降级成 ?"
-    assert "邮件管家".encode("gbk") in encoded, "中文必须完整保留"
+    assert "信使鸟".encode("gbk") in encoded, "中文必须完整保留"
 
 
 # ---------------------------------------------------------------------------

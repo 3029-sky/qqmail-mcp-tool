@@ -198,7 +198,7 @@ class _EventMessage:
 
 BANNER = """
 ╭──────────────────────────────────────────────╮
-│  📬  邮件管家                                 │
+│  🕊  信使鸟                                    │
 ╰──────────────────────────────────────────────╯
 直接说人话就行，例如：
   给我自己发封邮件，说早上好
@@ -254,7 +254,7 @@ def handle_clipboard_paste() -> None:
 
 async def chat(butler: EmailButler) -> None:
     print(BANNER)
-    print("你好，我是小邮。发件邮箱是 %s。\n" % butler.my_email)
+    print("你好，我是信使鸟。发件邮箱是 %s。\n" % butler.my_email)
 
     while True:
         try:
@@ -291,9 +291,9 @@ async def chat(butler: EmailButler) -> None:
             continue
 
         if reply:
-            print("\n小邮 ▸ %s\n" % reply.replace("\n", "\n      "))
+            print("\n信使鸟 ▸ %s\n" % reply.replace("\n", "\n      "))
         else:
-            print("\n小邮 ▸ （没有返回内容）\n")
+            print("\n信使鸟 ▸ （没有返回内容）\n")
 
 
 async def main() -> int:
