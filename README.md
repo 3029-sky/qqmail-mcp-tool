@@ -47,14 +47,15 @@
 
 | 特性 | 说明 |
 |---|---|
-| **对话式发信** | `email_butler.py` 单入口启动，用中文说"给我自己发封邮件，说早上好"即可；带多轮记忆，能接住"主题改成…"这类追问 |
-| **剪贴板直发图片/文件** | 复制图片或压缩包后输入 `/粘贴`，自动落地成附件。终端本身粘不出图片，也粘不出文件路径，因此直接读剪贴板 |
+| **图形界面** | `webui.py` 起一个本地网页应用，用 Edge 的 `--app` 模式开成独立窗口；**能直接 Ctrl+V 粘贴图片与压缩包**，可下拉切换模型 |
+| **对话式发信** | 说中文即可，带多轮记忆，能接住"主题改成…"这类追问。两个客户端共用同一套后端 |
+| **终端版也能收附件** | 复制图片或压缩包后输入 `/粘贴`，自动落地成附件。终端本身粘不出图片，也粘不出文件路径，因此直接读剪贴板 |
 | **标准 MCP 协议** | 使用官方 Streamable HTTP 传输层，支持完整的 `initialize` 握手与会话管理，任意合规 MCP 客户端均可接入 |
 | **4 个邮件工具** | 纯文本 / HTML / 附件邮件，以及配置检查 |
 | **SMTP 连接复用** | 专用工作线程独占连接，实测 5 封邮件仅建立 1 条 TLS 连接 |
 | **结构化日志** | 可选单行 JSON 输出，便于日志系统采集 |
 | **发送指标** | 成功率、延迟分位数、失败原因分布，经 `/metrics` 暴露 |
-| **零外部依赖的测试** | 替换 SMTP/IMAP 层与注入替身，290 个用例不联网、不碰真实邮箱、约 3.5 秒跑完 |
+| **零外部依赖的测试** | 替换 SMTP/IMAP 层与注入替身，352 个用例不联网、不碰真实邮箱、约 5 秒跑完 |
 
 ---
 
@@ -63,7 +64,9 @@
 ```
                         ┌─────────────────────────────────────────┐
                         │              MCP 客户端                 │
-                        │  email_butler.py （邮件管家，日常入口）  │
+                        │  webui.py   （图形界面，推荐入口）       │
+                        │  email_butler.py （终端界面）            │
+                        │  两者共用 butler_core.py                 │
                         │  （任何合规 MCP 客户端都可接入）         │
                         └────────────────────┬────────────────────┘
                                              │  MCP over HTTP (JSON-RPC)
@@ -148,7 +151,7 @@ copy .env.example .env          # Windows
 >
 > ```bash
 > copy .env.test .env      # 只有假数据，测试全程不发起真实请求
-> python -m pytest -q      # 应看到 290 passed
+> python -m pytest -q      # 应看到 352 passed
 > ```
 >
 > `SMTP_EMAIL` 与 `SMTP_PASSWORD` 是**必填**项，两者都缺失时测试会在
@@ -162,28 +165,53 @@ python run_server.py
 
 启动后访问 <http://localhost:8000/health> 应返回 `{"status": "healthy", ...}`。
 
-### 5.（可选）使用智能体客户端
+### 5.（可选）使用图形界面（推荐）
 
-先确保 Ollama 已运行并已拉取模型：
+先确保 Ollama 已运行并已拉取模型（两个客户端都需要它）：
 
 ```bash
 ollama serve
 ollama pull qwen2.5:3b
 ```
 
-然后启动管家，直接跟它说话（它会自己拉起 MCP 服务器）：
+**双击根目录的 `启动应用.bat`** —— 它会启动本地服务并打开一个独立窗口
+（没有地址栏、没有标签页，看起来就是一个桌面应用）。
+
+或者用命令行：
+
+```bash
+python webui.py            # 启动并自动开窗口
+python webui.py --no-open  # 只启动服务，自己在浏览器打开 http://127.0.0.1:8765/
+```
+
+界面能做的事：
+
+| 功能 | 说明 |
+|---|---|
+| **直接粘贴图片/文件** | 在输入框按 `Ctrl+V`，图片与压缩包直接作为附件 |
+| **切换模型** | 右上角下拉框，列出 Ollama 里已装的模型，切换后对话历史保留 |
+| **附件面板** | 左侧列出附件目录，图片显示缩略图，可删除、点击填入输入框 |
+| **动作可见** | 它决定调用哪个工具、参数是什么，**在工具执行前**就显示成卡片 |
+
+窗口是**本地专用**的（只监听 `127.0.0.1:8765`）。这个界面能直接发邮件，
+不要把它暴露到局域网或公网。
+
+### 6.（可选）使用终端客户端
 
 ```bash
 python email_butler.py
 ```
 
-也可以双击根目录的 `启动管家.bat`。
-
-需要手动控制服务器时（排查问题、或接入自己的客户端）：
+也可以双击根目录的 `启动管家.bat`。需要手动控制服务器时（排查问题、
+或接入自己的客户端）：
 
 ```bash
 python run_server.py
 ```
+
+> **两个客户端共用同一套后端**（`butler_core.py`）：提示词、工具标签、
+> 多轮历史累积方式完全一致，因此「主题改成…」这类追问在两边行为相同。
+> 抽出来就是为了避免两份实现各自漂移。
 
 ---
 
@@ -423,7 +451,7 @@ python -m pytest -q         # 精简输出
 python -m pytest tests/test_email_tools.py -v
 ```
 
-套件共 290 个用例，**全程不发起真实网络请求**：
+套件共 352 个用例，**全程不发起真实网络请求**：
 
 | 文件 | 关注点 |
 |---|---|
@@ -432,7 +460,10 @@ python -m pytest tests/test_email_tools.py -v
 | `tests/test_delivery.py` | **发送确认**：主题 MIME 解码匹配、收件人校验、重试轮询、失败降级 |
 | `tests/test_retry.py` | **重试分类**：4xx 可重试 / 5xx 不可重试、退避上限、次数耗尽的传播 |
 | `tests/test_idempotency.py` | **幂等键**：重复请求不再发送、TTL 过期、卡死占用回收 |
-| `tests/test_email_butler.py` | **管家**：多轮记忆、只显示本轮动作、Ollama 检查、附件列举、提示词约束、`/粘贴` 指令、GBK 下的输出加固 |
+| `tests/test_butler_core.py` | **共用后端**：回复提取（不取错工具返回）、事件转换、流式顺序、历史累积与截断 |
+| `tests/test_email_butler.py` | **终端界面**：多轮记忆、只显示本轮动作、`/粘贴` 指令、GBK 下的输出加固 |
+| `tests/test_webui.py` | **网页后端**：路径穿越防护、上传落盘（重名/超限/空文件）、SSE 事件顺序 |
+| `tests/test_open_window.py` | **窗口启动器**：`--app` 与 `--user-data-dir` 参数拼装、找不到浏览器时的降级 |
 | `tests/test_clipboard.py` | **剪贴板导入**：位图逐像素解析（行对齐、自下而上、BGRA→RGB）、文件复制、超限跳过、PNG 落地 |
 | `tests/test_email_tools.py` | MIME 结构、UTF-8 编码、附件、连接复用、指标、错误处理 |
 | `tests/test_mcp_server.py` | REST 端点 + **真实 MCP 协议握手与工具调用** |
@@ -776,9 +807,15 @@ qqmail-mcp-tool/
 ├── delivery.py              # 发送确认（IMAP 回读「已发送」）
 ├── retry.py                 # 重试策略与错误分类
 ├── idempotency.py           # 幂等键（防止重复发信）
-├── email_butler.py          # 邮件管家（推荐入口：自动起服务器 + 多轮记忆）
-├── clipboard.py             # 剪贴板导入（/粘贴 指令：图片与文件）
-├── 启动管家.bat              # 双击启动管家（仅含 ASCII，中文提示由 Python 输出）
+├── butler_core.py           # 管家后端（终端与网页共用：提示词、会话、历史累积）
+├── webui.py                 # 图形界面（FastAPI + SSE，启动本地服务）
+├── open_window.py           # 把网页开成独立窗口（Edge --app 模式）
+├── static/
+│   └── index.html           # 前端界面（原生 HTML/CSS/JS，无构建步骤）
+├── email_butler.py          # 终端界面（自动起服务器 + 多轮记忆）
+├── clipboard.py             # 剪贴板导入（终端 /粘贴 指令：图片与文件）
+├── 启动应用.bat              # 双击启动图形界面（仅含 ASCII）
+├── 启动管家.bat              # 双击启动终端界面（仅含 ASCII）
 ├── create_attachments.py    # 生成示例附件（报表/纪要/配置）
 ├── requirements.txt         # 运行时依赖
 ├── requirements-dev.txt     # 测试依赖
@@ -789,19 +826,23 @@ qqmail-mcp-tool/
 ├── .env.example             # 配置模板（可提交）
 ├── .env.test                # CI 用占位配置
 ├── .github/workflows/tests.yml
-├── tests/                   # 290 个用例
+├── tests/                   # 352 个用例
 │   ├── conftest.py
 │   ├── test_config.py
 │   ├── test_auth.py
 │   ├── test_delivery.py
 │   ├── test_retry.py
 │   ├── test_idempotency.py
+│   ├── test_butler_core.py
 │   ├── test_email_butler.py
+│   ├── test_webui.py
+│   ├── test_open_window.py
 │   ├── test_clipboard.py
 │   ├── test_email_tools.py
 │   ├── test_mcp_server.py
 │   └── test_tool_defs.py
-└── attachments/             # 附件目录（示例附件由 create_attachments.py 生成，/粘贴 也放这里）
+└── attachments/             # 附件目录（示例附件由 create_attachments.py 生成；
+                             #   粘贴、拖放、终端 /粘贴 的文件都放这里）
 ```
 
 ---

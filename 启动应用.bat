@@ -1,10 +1,15 @@
 @echo off
 rem ============================================================
-rem  Start the email butler (TERMINAL version).
+rem  Start the email butler WEB APP (graphical window).
 rem
-rem  For the graphical app, double-click the WEB APP launcher
-rem  (its filename is Chinese: the one ending in "_app"-equivalent,
-rem   i.e. the OTHER .bat file next to this one).
+rem  Double-click this file. It does three things:
+rem    1. starts the local web server on 127.0.0.1:8765
+rem    2. opens a standalone app window (Edge/Chrome --app mode,
+rem       no address bar, no tabs)
+rem    3. keeps running until you close that window
+rem
+rem  The window is local-only and can send real email, so never
+rem  expose port 8765 to your LAN or the internet.
 rem
 rem  NOTE: keep this file ASCII-only.
 rem  cmd.exe parses .bat files using the system ANSI code page,
@@ -15,12 +20,12 @@ rem ============================================================
 cd /d "%~dp0"
 set "PY=venv\Scripts\python.exe"
 
-title Email Butler
+title Email Butler App
 
 if not exist "%PY%" goto :no_venv
 if not exist ".env" goto :no_env
 
-"%PY%" email_butler.py
+"%PY%" webui.py
 echo.
 pause
 exit /b 0

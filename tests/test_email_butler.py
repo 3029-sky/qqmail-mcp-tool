@@ -138,20 +138,23 @@ def test_ollama_config_comes_from_settings(monkeypatch):
     """
     import importlib
 
+    import butler_core
     import config
     import email_butler
 
     monkeypatch.setenv("OLLAMA_MODEL", "qwen2.5:7b")
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://192.168.1.9:11434")
     importlib.reload(config)
+    importlib.reload(butler_core)
     importlib.reload(email_butler)
 
     try:
         assert email_butler.OLLAMA_MODEL == "qwen2.5:7b", "模型名应取自配置"
         assert email_butler.OLLAMA_BASE_URL == "http://192.168.1.9:11434", "地址应取自配置"
     finally:
-        # 收尾：把 config 与 email_butler 都还原成真实配置，避免污染后续用例
+        # 收尾：全部还原成真实配置，避免污染后续用例
         importlib.reload(config)
+        importlib.reload(butler_core)
         importlib.reload(email_butler)
 
 
@@ -159,27 +162,29 @@ def test_check_ollama_uses_configured_model(monkeypatch):
     """
     模型名可配置后，「缺模型」的提示必须跟着变——
     否则换了模型却仍提示去 pull 默认模型，等于给了错误的修复命令。
+
+    check_ollama 住在 butler_core（终端与网页共用），因此打桩打在那边。
     """
     import importlib
 
+    import butler_core
     import config
-    import email_butler
 
     monkeypatch.setenv("OLLAMA_MODEL", "llama3:8b")
     importlib.reload(config)
-    importlib.reload(email_butler)
+    importlib.reload(butler_core)
 
     try:
         monkeypatch.setattr(
-            email_butler.httpx, "get",
+            butler_core.httpx, "get",
             lambda *a, **k: _Resp({"models": [{"name": "qwen2.5:3b"}]}),
         )
-        problem = email_butler.check_ollama()
+        problem = butler_core.check_ollama()
         assert problem is not None
         assert "llama3:8b" in problem, "应提示拉取当前配置的模型"
     finally:
         importlib.reload(config)
-        importlib.reload(email_butler)
+        importlib.reload(butler_core)
 
 
 # ---------------------------------------------------------------------------
@@ -242,14 +247,15 @@ def test_server_process_stop_is_noop_when_reused(monkeypatch):
 
 
 def test_server_process_raises_if_child_exits_immediately(monkeypatch):
-    import email_butler
+    # MCPServerProcess 住在 butler_core（终端与网页共用），打桩要打在它的模块上
+    import butler_core
 
     class DeadProc:
         def poll(self):
             return 1  # 已退出
 
-    monkeypatch.setattr(email_butler, "is_server_up", lambda: False)
-    monkeypatch.setattr(email_butler.subprocess, "Popen", lambda *a, **k: DeadProc())
+    monkeypatch.setattr(butler_core, "is_server_up", lambda: False)
+    monkeypatch.setattr(butler_core.subprocess, "Popen", lambda *a, **k: DeadProc())
 
     proc = MCPServerProcess()
     with pytest.raises(RuntimeError) as e:
@@ -258,7 +264,7 @@ def test_server_process_raises_if_child_exits_immediately(monkeypatch):
 
 
 def test_server_process_times_out(monkeypatch):
-    import email_butler
+    import butler_core
 
     class SlowProc:
         def poll(self):
@@ -270,10 +276,10 @@ def test_server_process_times_out(monkeypatch):
         def wait(self, timeout=None):
             return 0
 
-    monkeypatch.setattr(email_butler, "is_server_up", lambda: False)
-    monkeypatch.setattr(email_butler.subprocess, "Popen", lambda *a, **k: SlowProc())
-    monkeypatch.setattr(email_butler, "SERVER_READY_TIMEOUT", 0.3)
-    monkeypatch.setattr(email_butler.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(butler_core, "is_server_up", lambda: False)
+    monkeypatch.setattr(butler_core.subprocess, "Popen", lambda *a, **k: SlowProc())
+    monkeypatch.setattr(butler_core, "SERVER_READY_TIMEOUT", 0.3)
+    monkeypatch.setattr(butler_core.time, "sleep", lambda _s: None)
 
     proc = MCPServerProcess()
     with pytest.raises(RuntimeError) as e:
@@ -470,24 +476,46 @@ def test_prompt_forbids_guessing_attachment_names():
 # ask()：多轮记忆与「只展示本轮动作」
 # ---------------------------------------------------------------------------
 
-class _AIMsg:
+class _FakeMessage:
+    """
+    假消息的基类。
+
+    真实类名的子类（AIMessage / ToolMessage）刻意用**真实名字**：
+    butler_core 是按 `type(msg).__name__` 判断消息类型的
+    （工具调用、工具返回、最终回复各自不同处理），
+    用裸类名会让这些判断全部走空——测试就失去意义了。
+    """
+
     def __init__(self, content="", tool_calls=None):
         self.content = content
         self.tool_calls = tool_calls or []
+        self.artifact = None
 
 
-class _ToolMsg:
+class AIMessage(_FakeMessage):      # noqa: N801 - 名字即被测代码依赖的类名
+    pass
+
+
+class ToolMessage(_FakeMessage):    # noqa: N801
     def __init__(self, text):
-        self.content = [{"type": "text", "text": text}]
-        self.tool_calls = []
+        super().__init__(content=[{"type": "text", "text": text}])
+
+
+def _AIMsg(content="", tool_calls=None):
+    return AIMessage(content, tool_calls)
+
+
+def _ToolMsg(text):
+    return ToolMessage(text)
 
 
 class _FakeAgent:
     """
-    假智能体：按脚本返回**累积**的消息列表（与真实 LangGraph 行为一致）。
+    假智能体：按脚本产出**本轮新增**的消息（与真实 LangGraph 一致）。
 
-    真实 ainvoke 会把传入的历史一并返回，这正是曾经导致
-    「把上一轮的工具调用又打印一遍」的原因。
+    真实 astream(stream_mode="updates") 每个节点结束时产出一批消息，
+    因此这里一条一条 yield；而 ainvoke 会把传入的历史一并返回，
+    这正是曾经导致「把上一轮的工具调用又打印一遍」的原因。
     """
 
     def __init__(self, turns):
@@ -495,13 +523,21 @@ class _FakeAgent:
         self.seen_history_lengths = []
         self.seen_histories = []
 
-    async def ainvoke(self, payload):
+    def _record(self, payload):
+        """记录本轮收到的历史。注意：**不消耗**脚本轮次。"""
         incoming = payload["messages"]
         self.seen_history_lengths.append(len(incoming))
         self.seen_histories.append(list(incoming))
-        # 累积：历史 + 本轮新增
-        accumulated = list(incoming) + self.turns.pop(0)
-        return {"messages": accumulated}
+        return incoming
+
+    async def ainvoke(self, payload):
+        incoming = self._record(payload)
+        return {"messages": list(incoming) + self.turns.pop(0)}
+
+    async def astream(self, payload, stream_mode=None):
+        self._record(payload)
+        for msg in self.turns.pop(0):
+            yield {"model": {"messages": [msg]}}
 
 
 def _make_butler(turns):

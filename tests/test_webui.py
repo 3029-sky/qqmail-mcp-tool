@@ -1,0 +1,440 @@
+# tests/test_webui.py - 网页界面的后端测试
+"""
+用 httpx.ASGITransport 在进程内驱动真实的 FastAPI 应用——
+不启动服务器、不占端口、不连网、不发信。
+
+重点覆盖三处最容易出问题的地方：
+
+  1. **路径穿越**。`/api/attachments/{name}` 是本应用唯一接受外部
+     文件名的入口，若只做字符串拼接，`../../.env` 就能把授权码读走。
+  2. **上传落盘**：重名不覆盖、超限拒绝、空文件拒绝。
+  3. **对话流**：SSE 事件顺序必须与终端版一致（都用 butler_core）。
+"""
+
+import json
+from pathlib import Path
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+import webui
+
+
+@pytest.fixture
+def attachment_dir(tmp_path, monkeypatch):
+    """
+    把附件目录指到临时目录，避免测试污染真实的 attachments/。
+
+    注意要打桩**所有**已经 import 过 settings 的模块：`from config import
+    settings` 是把对象绑定到各模块自己的命名空间里的，只改 `config.settings`
+    不会影响已经绑定过的模块。而个别用例会 reload config（测配置来源），
+    那会让两边指向不同的对象——所以这里挨个打一遍。
+    """
+    import butler_core
+
+    for module in (webui, butler_core):
+        monkeypatch.setattr(module.settings, "attachment_dir", tmp_path)
+
+    monkeypatch.setattr(webui, "MAX_UPLOAD_BYTES", 1024 * 100)   # 100 KB，便于测超限
+    return tmp_path
+
+
+@pytest.fixture
+async def client(attachment_dir):
+    transport = ASGITransport(app=webui.app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
+        yield c
+
+
+# ---------------------------------------------------------------------------
+# 基础端点
+# ---------------------------------------------------------------------------
+
+async def test_index_serves_the_page(client):
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    assert "邮件管家" in resp.text
+    assert "Ctrl+V" in resp.text, "页面要告诉用户可以直接粘贴"
+
+
+async def test_health(client):
+    resp = await client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+
+async def test_info_reports_email_and_limits(client, attachment_dir):
+    resp = await client.get("/api/info")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "email" in data
+    assert data["attachments_dir"] == str(attachment_dir)
+    assert data["max_attachment_bytes"] == 1024 * 100
+
+
+async def test_models_lists_installed_and_current(client, monkeypatch):
+    import butler_core
+
+    monkeypatch.setattr(butler_core, "list_ollama_models", lambda: ["a:1b", "b:2b"])
+    resp = await client.get("/api/models")
+    data = resp.json()
+    assert data["installed"] == ["a:1b", "b:2b"]
+    assert data["current"], "必须告诉界面当前用的是哪个模型"
+
+
+# ---------------------------------------------------------------------------
+# 附件：路径穿越防护（安全关键）
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "evil",
+    [
+        "../.env",
+        "../../.env",
+        "..\\..\\.env",
+        "sub/dir/file.txt",
+        "/etc/passwd",
+        "",
+    ],
+)
+async def test_attachment_path_traversal_is_blocked(client, evil):
+    """
+    回归测试：绝不能通过文件名爬到附件目录之外。
+
+    这个界面能直接发邮件，还能读到 .env（里面有 QQ 授权码）——
+    只要路径处理是拼接，`../.env` 就能把授权码读走。
+    """
+    for action in ("raw", "download"):
+        resp = await client.get("/api/attachments/%s/%s" % (evil, action))
+        assert resp.status_code in (400, 404, 405), (
+            "危险路径 %r 的 %s 应被拒绝，实际 %d" % (evil, action, resp.status_code)
+        )
+
+
+async def test_delete_path_traversal_is_blocked(client, tmp_path):
+    outside = tmp_path.parent / "不该被删.txt"
+    outside.write_text("x", encoding="utf-8")
+    resp = await client.delete("/api/attachments/..%2F不该被删.txt")
+    assert resp.status_code in (400, 404)
+    assert outside.is_file(), "目录外的文件不能被删掉"
+
+
+async def test_attachment_raw_serves_file(client, attachment_dir):
+    (attachment_dir / "图纸.png").write_bytes(b"\x89PNG\r\n\x1a\nDATA")
+    resp = await client.get("/api/attachments/%E5%9B%BE%E7%BA%B8.png/raw")
+    assert resp.status_code == 200
+    assert resp.content.endswith(b"DATA")
+
+
+async def test_attachment_delete_removes_file(client, attachment_dir):
+    target = attachment_dir / "待删.txt"
+    target.write_text("x", encoding="utf-8")
+    resp = await client.delete("/api/attachments/%E5%BE%85%E5%88%A0.txt")
+    assert resp.status_code == 200
+    assert not target.exists()
+
+
+async def test_attachments_are_sorted_newest_first(client, attachment_dir):
+    """最近放的排最前——刚粘贴的附件应该一眼看到。"""
+    import os
+    import time
+
+    old = attachment_dir / "旧.txt"
+    old.write_text("old", encoding="utf-8")
+    os.utime(old, (1000, 1000))
+
+    new = attachment_dir / "新.txt"
+    new.write_text("new", encoding="utf-8")
+    os.utime(new, (time.time(), time.time()))
+
+    resp = await client.get("/api/attachments")
+    names = [f["name"] for f in resp.json()["files"]]
+    assert names[0] == "新.txt"
+
+
+async def test_attachments_marks_images(client, attachment_dir):
+    (attachment_dir / "照片.jpg").write_bytes(b"\xff\xd8\xff\xe0x")
+    (attachment_dir / "文档.md").write_text("x", encoding="utf-8")
+
+    files = {f["name"]: f for f in (await client.get("/api/attachments")).json()["files"]}
+    assert files["照片.jpg"]["is_image"] is True
+    assert files["文档.md"]["is_image"] is False
+
+
+async def test_attachments_include_human_readable_size(client, attachment_dir):
+    (attachment_dir / "f.bin").write_bytes(b"x" * 2048)
+    files = (await client.get("/api/attachments")).json()["files"]
+    assert files[0]["size_text"] == "2.0 KB"
+
+
+# ---------------------------------------------------------------------------
+# 上传
+# ---------------------------------------------------------------------------
+
+async def test_upload_saves_file(client, attachment_dir):
+    resp = await client.post(
+        "/api/attachments",
+        files={"files": ("报表最终.csv", b"a,b\n1,2", "text/csv")},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["problems"] == []
+    assert data["saved"][0]["name"] == "报表最终.csv"
+    assert (attachment_dir / "报表最终.csv").read_bytes() == b"a,b\n1,2"
+
+
+async def test_upload_does_not_overwrite_existing(client, attachment_dir):
+    """重名要走新名字，不能把已有附件覆盖掉。"""
+    (attachment_dir / "同名.png").write_bytes(b"OLD")
+
+    resp = await client.post(
+        "/api/attachments",
+        files={"files": ("同名.png", b"NEW", "image/png")},
+    )
+    saved = resp.json()["saved"][0]["name"]
+    assert saved != "同名.png"
+    assert saved.endswith(".png"), "换名也要保留扩展名，否则模型认不出类型"
+    assert (attachment_dir / "同名.png").read_bytes() == b"OLD"
+
+
+async def test_upload_rejects_oversized_file(client, attachment_dir):
+    resp = await client.post(
+        "/api/attachments",
+        files={"files": ("巨大.zip", b"x" * (1024 * 200), "application/zip")},
+    )
+    data = resp.json()
+    assert data["saved"] == []
+    assert len(data["problems"]) == 1
+    assert "超过单件上限" in data["problems"][0]
+    assert not (attachment_dir / "巨大.zip").exists()
+
+
+async def test_upload_rejects_empty_file(client, attachment_dir):
+    resp = await client.post(
+        "/api/attachments",
+        files={"files": ("空.txt", b"", "text/plain")},
+    )
+    data = resp.json()
+    assert data["saved"] == []
+    assert "空" in data["problems"][0]
+
+
+async def test_upload_handles_multiple_files(client, attachment_dir):
+    resp = await client.post(
+        "/api/attachments",
+        files=[
+            ("files", ("a.txt", b"aaa", "text/plain")),
+            ("files", ("b.txt", b"bbb", "text/plain")),
+        ],
+    )
+    names = sorted(f["name"] for f in resp.json()["saved"])
+    assert names == ["a.txt", "b.txt"]
+
+
+async def test_upload_strips_directory_from_filename(client, attachment_dir):
+    """浏览器可能带上路径，必须只取文件名。"""
+    resp = await client.post(
+        "/api/attachments",
+        files={"files": ("../../evil.txt", b"x", "text/plain")},
+    )
+    saved = resp.json()["saved"][0]["name"]
+    assert saved == "evil.txt"
+    assert (attachment_dir / "evil.txt").is_file()
+
+
+async def test_tests_never_write_to_the_real_attachment_dir(client, attachment_dir):
+    """
+    回归测试：测试绝不能往项目真实的 attachments/ 里写文件。
+
+    这条已经踩过一次：`from config import settings` 把 settings 对象
+    绑定到各模块自己的命名空间里，只打桩 `config.settings` 时，
+    已经绑定过的模块仍指向旧对象——于是测试把 a.txt、evil.txt
+    这类文件写进了真实附件目录（是靠 `_2` 后缀的重名避让暴露的）。
+
+    注意这里**不能**用 settings.attachment_dir 取「真实目录」：
+    它正是被 fixture 打桩的那个对象，读出来一定是临时目录。
+    直接从 config.py 的位置推导才可靠。
+    """
+    import config as config_module
+
+    real_dir = Path(config_module.__file__).resolve().parent / "attachments"
+
+    # 临时目录必须真的被用上了，否则下面的断言毫无意义
+    assert Path(attachment_dir).resolve() != real_dir.resolve(), "fixture 没生效"
+
+    await client.post(
+        "/api/attachments",
+        files={"files": ("不该出现在真实目录.txt", b"x", "text/plain")},
+    )
+
+    leaked = real_dir / "不该出现在真实目录.txt"
+    assert not leaked.exists(), "测试污染了真实附件目录：%s" % leaked
+
+
+# ---------------------------------------------------------------------------
+# 对话（SSE）
+# ---------------------------------------------------------------------------
+
+class _FakeAgent:
+    """按脚本产出的假智能体，类名与真实消息一致（见 test_butler_core）。"""
+
+    def __init__(self, turns):
+        self.turns = list(turns)
+        self.seen = []
+
+    async def astream(self, payload, stream_mode=None):
+        self.seen.append(list(payload["messages"]))
+        for msg in self.turns.pop(0):
+            yield {"model": {"messages": [msg]}}
+
+
+class AIMessage:
+    def __init__(self, content="", tool_calls=None):
+        self.content = content
+        self.tool_calls = tool_calls or []
+        self.artifact = None
+
+
+class ToolMessage:
+    def __init__(self, text):
+        self.content = [{"type": "text", "text": text}]
+        self.tool_calls = []
+        self.artifact = None
+
+
+@pytest.fixture
+def fake_session(monkeypatch):
+    """把管家会话换成替身，并标记为已启动，避免真的去拉 Ollama 与 MCP。"""
+    import butler_core
+
+    session = butler_core.AgentSession()
+    session.agent = _FakeAgent([[
+        AIMessage(tool_calls=[{"name": "send_text_email",
+                               "args": {"to_email": "a@b.com", "subject": "早"}}]),
+        ToolMessage("✅ 邮件发送成功"),
+        AIMessage("已发给你。"),
+    ]])
+    session.model = "test-model"
+
+    monkeypatch.setattr(webui.state, "session", session)
+    monkeypatch.setattr(webui.state, "ready", True)
+    return session
+
+
+def parse_sse(text):
+    events = []
+    for block in text.split("\n\n"):
+        for line in block.split("\n"):
+            if line.startswith("data:"):
+                events.append(json.loads(line[5:].strip()))
+    return events
+
+
+async def test_chat_streams_tool_call_then_result_then_reply(client, fake_session):
+    """
+    事件顺序与终端版一致：先「决定调用」，再「执行结果」，最后回复。
+
+    顺序错了界面就会先显示结果后显示动作，读起来莫名其妙。
+    """
+    resp = await client.post("/api/chat", json={"text": "给我自己发封邮件"})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+
+    events = parse_sse(resp.text)
+    types = [e["type"] for e in events]
+
+    assert types[0] == "start"
+    assert "tool_call" in types and "tool_result" in types and "reply" in types
+    assert types.index("tool_call") < types.index("tool_result") < types.index("reply")
+    assert types[-1] == "done"
+
+
+async def test_chat_tool_call_carries_labels_and_args(client, fake_session):
+    resp = await client.post("/api/chat", json={"text": "发邮件"})
+    events = parse_sse(resp.text)
+    call = next(e for e in events if e["type"] == "tool_call")
+    assert call["label"] == "发送邮件", "界面直接显示中文动作"
+    assert call["args"]["to_email"] == "a@b.com"
+
+
+async def test_chat_reply_is_the_assistant_text(client, fake_session):
+    """回复必须是模型的话，不是工具原文。"""
+    resp = await client.post("/api/chat", json={"text": "发邮件"})
+    events = parse_sse(resp.text)
+    reply = next(e for e in events if e["type"] == "reply")
+    assert reply["text"] == "已发给你。"
+
+
+async def test_chat_mentions_pending_attachments(client, fake_session):
+    """
+    界面上附带的文件要明确告诉模型。
+
+    否则「把这张图发给张三」里的「这张图」只能靠模型猜文件名——
+    目录里可能有很多旧文件，很容易发错。
+    """
+    resp = await client.post(
+        "/api/chat",
+        json={"text": "发给我自己", "attachments": ["图纸.png", "报价.pdf"]},
+    )
+    assert resp.status_code == 200
+
+    sent = fake_session.agent.seen[0][0]
+    content = sent[1] if isinstance(sent, tuple) else str(sent)
+    assert "图纸.png" in content and "报价.pdf" in content
+
+
+async def test_chat_returns_attachments_after_turn(client, fake_session, attachment_dir):
+    """一轮结束后要回传最新附件列表，界面才能刷新（模型可能刚导入了文件）。"""
+    (attachment_dir / "新加入.txt").write_text("x", encoding="utf-8")
+    resp = await client.post("/api/chat", json={"text": "发邮件"})
+    events = parse_sse(resp.text)
+    ev = next(e for e in events if e["type"] == "attachments")
+    assert any(f["name"] == "新加入.txt" for f in ev["files"])
+
+
+async def test_chat_rejects_empty_text(client, fake_session):
+    resp = await client.post("/api/chat", json={"text": "   "})
+    assert resp.status_code == 400
+
+
+async def test_chat_reports_error_event(client, monkeypatch):
+    """模型环节出错要作为 error 事件推给界面，而不是让连接无声中断。"""
+    import butler_core
+
+    class BoomAgent:
+        async def astream(self, payload, stream_mode=None):
+            raise RuntimeError("Ollama 挂了")
+            yield  # pragma: no cover - 让它是生成器
+
+    session = butler_core.AgentSession()
+    session.agent = BoomAgent()
+    monkeypatch.setattr(webui.state, "session", session)
+    monkeypatch.setattr(webui.state, "ready", True)
+
+    resp = await client.post("/api/chat", json={"text": "发邮件"})
+    events = parse_sse(resp.text)
+    assert any(e["type"] == "error" and "Ollama 挂了" in e["text"] for e in events)
+
+
+# ---------------------------------------------------------------------------
+# 会话管理
+# ---------------------------------------------------------------------------
+
+async def test_reset_clears_history(client, fake_session):
+    fake_session.history = [("user", "旧对话")]
+    resp = await client.post("/api/reset")
+    assert resp.status_code == 200
+    assert fake_session.history == []
+
+
+async def test_switch_model_rejects_unknown_model(client, fake_session, monkeypatch):
+    """切到没装的模型要报错，且不能把当前模型改坏。"""
+    resp = await client.post("/api/models", json={"model": "不存在:99b"})
+    assert resp.status_code == 400
+    assert "不存在:99b" in resp.json()["detail"]
+    assert fake_session.model == "test-model", "失败的切换不该改掉当前模型"
+
+
+async def test_switch_model_requires_model_field(client, fake_session):
+    resp = await client.post("/api/models", json={})
+    assert resp.status_code == 400

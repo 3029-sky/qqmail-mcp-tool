@@ -282,6 +282,61 @@ def test_unrelated_filename_is_still_rejected(tools, fake_smtp, tmp_path):
     assert result["reason"] == "missing_attachment"
 
 
+def test_explicit_directory_does_not_fall_back_to_attachment_dir(
+    tools, fake_smtp, tmp_path, monkeypatch
+):
+    """
+    回归测试：用户指明了目录时，绝不能转头去附件目录里搜同名文件。
+
+    这条边界曾经被放宽过头（v0.9 的附件目录回退）：路径 `D:\\报表\\a.txt`
+    不存在时，会去附件目录里找一个叫 a.txt 的文件发出去——
+    用户以为发的是 D 盘那份，实际发的是附件目录里的另一份。
+    **发错文件比发不出去严重得多**，所以这里必须严格。
+
+    修复前实测：用 tmp 目录里的 a.txt / b.txt（都不存在）调用，
+    返回 success=True。
+    """
+    import email_tools
+
+    # 附件目录里放一个同名的真实文件，制造「会被误匹配」的条件
+    attachment_dir = tmp_path / "attachments"
+    attachment_dir.mkdir()
+    (attachment_dir / "a.txt").write_text("附件目录里的另一份", encoding="utf-8")
+    monkeypatch.setattr(email_tools.settings, "attachment_dir", attachment_dir)
+
+    elsewhere = tmp_path / "别处"
+    elsewhere.mkdir()
+    ghost = str(elsewhere / "a.txt")          # 该目录里并没有这个文件
+
+    result = tools.sender.send_email_sync("a@b.com", "s", "b", attachments=[ghost])
+
+    assert result["success"] is False, "指了目录就不该去附件目录里瞎找"
+    assert result["reason"] == "missing_attachment"
+    assert result["missing_attachments"] == [ghost]
+
+
+def test_bare_name_still_falls_back_to_attachment_dir(
+    tools, fake_smtp, tmp_path, monkeypatch
+):
+    """
+    与之相对：**裸文件名**（没给目录）仍应回落到附件目录。
+
+    这是最常见的情形——系统提示词列出的就是附件目录里的文件名，
+    模型很自然地只回一个「示例报表.csv」。
+    """
+    import email_tools
+
+    attachment_dir = tmp_path / "attachments"
+    attachment_dir.mkdir()
+    (attachment_dir / "报表.csv").write_text("a,b", encoding="utf-8")
+    monkeypatch.setattr(email_tools.settings, "attachment_dir", attachment_dir)
+
+    result = tools.sender.send_email_sync("a@b.com", "s", "b", attachments=["报表.csv"])
+
+    assert result["success"] is True
+    assert result["attachments"] == [str(attachment_dir / "报表.csv")]
+
+
 # ---------------------------------------------------------------------------
 # 裸文件名与带引号的路径
 # ---------------------------------------------------------------------------

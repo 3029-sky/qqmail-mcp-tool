@@ -260,14 +260,21 @@ def resolve_attachment_paths(paths: List[str]) -> tuple:
                 chosen = candidate
                 break
 
-        # 指定目录内的宽松匹配（先看给定目录，再看附件目录）
         if chosen is None:
             for candidate, _ in candidates:
-                directories = []
-                if str(candidate.parent) not in ("", "."):
-                    directories.append(candidate.parent)
-                # 裸文件名或指定目录里找不到时，回落到附件目录
-                directories.append(Path(settings.attachment_dir))
+                has_directory = bool(candidate.parent.name) and str(candidate.parent) not in ("", ".")
+
+                if has_directory:
+                    # 用户指明了目录，就**只**在那个目录里找宽松匹配。
+                    # 找不到就是找不到——绝不能转头去附件目录里搜同名文件：
+                    # 那会把「D:\报表\a.txt 不存在」变成悄悄发一份附件目录里的
+                    # a.txt，用户以为发的是 D 盘那份。
+                    directories = [candidate.parent]
+                else:
+                    # 裸文件名（没给目录）才回落到附件目录。这是最常见的
+                    # 情形：提示词里列的就是附件目录里的文件名，模型自然
+                    # 只回一个「示例报表.csv」。
+                    directories = [Path(settings.attachment_dir)]
 
                 for directory in directories:
                     if not directory.is_dir():
