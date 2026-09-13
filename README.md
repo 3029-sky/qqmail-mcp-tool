@@ -7,6 +7,8 @@
 而是把发邮件中那些容易被忽略、却会真实出事的环节都处理了——
 附件找不到就中止发送、重试不会重复发信、批量发送不会把账号打到限流。
 
+<img src="docs/shot-welcome.png" alt="信使鸟界面：左侧附件/联系人/模板/签名分页，右侧对话区" width="820">
+
 ```
 你 ▸ 把这张图发给张三，主题是设计稿
   ⚙  发送带附件的邮件
@@ -16,6 +18,9 @@
   ↩  ✅ 邮件发送成功
   ⏱  3.2 秒
 ```
+
+左侧栏分四页：**附件 / 联系人 / 模板 / 签名**；邮箱、授权码、模型
+也都能在界面里改，保存即生效。
 
 ---
 
@@ -53,6 +58,10 @@
 | **主题切换** | 深色 / 浅色 / 跟随系统 |
 | **动作可见** | 它决定调用哪个工具、参数是什么，**在工具执行前**就显示出来 |
 
+设置面板（邮箱、授权码、模型都在这里改，保存即生效）：
+
+<img src="docs/shot-settings.png" alt="设置面板" width="760">
+
 ### 终端界面
 
 `python email_butler.py` 或双击 `启动管家.bat`。打印 `⚙ / ↩ / ⏱`，
@@ -60,6 +69,10 @@
 
 **两个界面共用同一套后端**（`butler_core.py`），因此多轮改写等行为
 在两边完全一致——抽出来不是为了分层好看，而是避免两份实现各自漂移。
+
+批量发送（默认每封间隔 6 秒、单次上限 30 人、发前先预览名单）：
+
+<img src="docs/shot-batch.png" alt="批量发送面板" width="760">
 
 ### MCP 服务端
 
@@ -167,6 +180,44 @@ webui.py / email_butler.py     ← 两个界面
 | `GET` | `/health` | 健康检查（不触发外部连接） |
 | `GET` | `/metrics` | 发送指标快照 |
 | `GET` | `/tools` | 以纯 JSON 列出工具，便于人工查看 |
+
+---
+
+## 项目结构
+
+```
+qqmail-mcp-tool/
+├── 启动应用.bat / 启动管家.bat    # 双击启动（仅含 ASCII，避免中文路径解析问题）
+│
+├── butler_core.py          # 管家后端（两个界面共用：提示词、会话、MCP 生命周期）
+├── webui.py                # 图形界面（FastAPI + SSE 流式推送）
+├── open_window.py          # 把网页开成独立窗口（Edge --app 模式）
+├── email_butler.py         # 终端界面
+├── static/index.html       # 前端（原生 HTML/CSS/JS，无构建步骤）
+│
+├── mcp_server.py           # FastAPI + 官方 MCP 传输层
+├── tool_defs.py            # 工具定义的唯一真相来源
+├── email_tools.py          # MIME 构建与发送
+├── smtp_pool.py            # SMTP 连接复用
+├── delivery.py             # 发送确认（IMAP 回读）
+├── retry.py                # 重试策略与错误分类
+├── idempotency.py          # 幂等键
+├── metrics.py              # 发送指标
+├── auth.py                 # /mcp 的 Bearer 鉴权
+│
+├── config.py               # 配置（pydantic-settings）
+├── envfile.py              # .env 读写（应用内改配置：保留注释、原子写、脱敏读）
+├── userdata.py             # 联系人 / 模板 / 签名
+├── batch.py                # 批量发送（限流保护）
+├── clipboard.py            # 剪贴板导入（终端 /粘贴）
+├── create_attachments.py   # 生成示例附件
+├── run_server.py           # 只启动服务器
+│
+├── docs/                   # 界面截图
+├── tests/                  # 507 个用例，全程离线
+├── attachments/            # 附件目录（已整体 gitignore）
+└── data/                   # 联系人/模板/签名（已 gitignore）
+```
 
 ---
 
