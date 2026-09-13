@@ -41,9 +41,13 @@ from fastapi.staticfiles import StaticFiles
 import butler_core
 from clipboard import ClipboardItem, import_clipboard, is_supported as clipboard_supported
 from config import settings
+from envfile import RESTART_KEYS, SECRET_KEYS, EnvFile
 
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
+
+#: 应用自己读写的 .env
+ENV_FILE = EnvFile(ROOT / ".env")
 
 #: 网页界面端口。刻意避开 8000（那是 MCP 服务器的端口），
 #: 这样两个服务同时跑也不会打架。
@@ -267,28 +271,260 @@ async def api_paste_clipboard():
 
 @app.get("/api/models")
 async def api_models():
-    """列出可用模型与当前使用的模型，供界面下拉框使用。"""
-    current = state.session.model if state.session else settings.ollama_model
+    """
+    列出可用模型与当前使用的模型，供界面下拉框使用。
+
+    返回的每个条目都带 `available` 与 `reason`，界面据此说明
+    「为什么这个选项不能选」——比只显示一个灰掉的项有用得多。
+    """
     return {
-        "installed": butler_core.list_ollama_models(),
-        "current": current,
-        "default": settings.ollama_model,
+        "models": butler_core.list_available_models(),
+        "current": butler_core.active_ref(),
+        "default_ollama": settings.ollama_model,
+        "deepseek_configured": butler_core.deepseek_configured(),
     }
 
 
 @app.post("/api/models")
-async def api_switch_model(payload: Dict[str, str]):
+async def api_switch_model(payload: Dict[str, Any]):
+    """
+    切换模型。
+
+    这里**会按需启动会话**。早期实现是「会话没起来就返回 409 管家尚未启动」，
+    而会话是首次对话时才惰性启动的——于是「刚打开应用就去切模型」
+    必然失败，且报的是「管家尚未启动」，用户根本猜不到原因
+    （以为是模型有问题）。一个能自己满足的前置条件，不该当成错误抛出去。
+    """
     model = (payload or {}).get("model", "").strip()
     if not model:
         raise HTTPException(status_code=400, detail="缺少 model 参数")
-    if state.session is None:
-        raise HTTPException(status_code=409, detail="管家尚未启动")
+
+    # 用锁保护，避免与正在进行的对话同时改会话状态
+    if state.busy.locked():
+        raise HTTPException(status_code=409, detail="正在处理上一轮，请稍候再切换模型")
+
+    async with state.busy:
+        try:
+            await state.ensure_started()
+        except Exception as e:  # noqa: BLE001
+            state.error = str(e)[:500]
+            raise HTTPException(
+                status_code=400,
+                detail="管家启动失败，无法切换模型：%s" % state.error)
+
+        try:
+            await state.session.use_model(model, on_step=state.log)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=str(e)[:300])
+
+        # 记住选择，下次启动仍是这个模型
+        try:
+            ENV_FILE.update({"ACTIVE_MODEL": model})
+            apply_env_to_settings(ENV_FILE.as_dict())
+        except Exception as e:  # noqa: BLE001 - 记不住选择不该让切换失败
+            state.log("警告：无法把模型选择写入 .env（%s）" % str(e)[:80])
+
+    return {"ok": True, "current": state.session.model}
+
+
+# ---------------------------------------------------------------------------
+# 配置编辑
+# ---------------------------------------------------------------------------
+
+def apply_env_to_settings(values: Dict[str, str]) -> List[str]:
+    """
+    把 .env 里的值**就地**应用到配置对象上，返回变化过的键。
+
+    为什么必须「就地改」而不是重新构造一个 Settings：
+    `from config import settings` 把对象绑定到每个模块自己的命名空间里
+    （email_tools、butler_core、webui 各有一份引用）。新建对象的话，
+    那些模块仍然指向旧对象——界面上显示已改、实际还在用旧凭据，
+    这是最难排查的一类问题。
+
+    `model_config` 上刻意没开 `validate_assignment`，
+    所以这里的赋值不会触发校验；合法性由调用方先校验。
+    """
+    from config import Settings
+
+    declared = set(Settings.model_fields.keys())
+    changed: List[str] = []
+
+    for key, raw in values.items():
+        field = key.lower()
+        if field not in declared:
+            continue
+        value: Any = raw
+        if field in ("smtp_port", "mcp_port", "imap_port"):
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                continue
+        elif field in ("debug", "email_confirm_delivery", "send_retry_on_reconnect"):
+            value = str(raw).strip().lower() in ("1", "true", "yes", "on")
+        elif field in ("deepseek_api_key", "active_model", "mcp_auth_token"):
+            value = raw.strip() or None
+
+        if getattr(settings, field, None) != value:
+            setattr(settings, field, value)
+            changed.append(key)
+
+    return changed
+
+
+def validate_smtp_input(values: Dict[str, str]) -> List[str]:
+    """
+    保存**之前**校验邮箱与授权码，返回可直接展示的问题列表。
+
+    为什么值得单独校验：
+      - 授权码不是 QQ 密码，用户很容易填成密码。长度是唯一能离线判断的特征。
+      - 空值必须拦住，否则 Settings 构造会抛 ValidationError，
+        而那条栈对用户毫无意义。
+    """
+    problems: List[str] = []
+
+    email = values.get("SMTP_EMAIL")
+    if email is not None:
+        email = email.strip()
+        if not email:
+            problems.append("邮箱地址不能为空。")
+        elif "@" not in email or "." not in email.split("@")[-1]:
+            problems.append("邮箱地址看起来不对：%s" % email)
+
+    password = values.get("SMTP_PASSWORD")
+    if password is not None:
+        password = password.strip()
+        if not password:
+            problems.append("授权码不能为空。")
+        elif len(password) != 16:
+            problems.append(
+                "授权码长度是 %d，但 QQ 邮箱的授权码固定为 16 位。"
+                "请确认填的不是 QQ 密码。" % len(password))
+
+    port = values.get("SMTP_PORT")
+    if port:
+        try:
+            int(port)
+        except ValueError:
+            problems.append("端口必须是数字：%s" % port)
+
+    return problems
+
+
+@app.get("/api/config")
+async def api_get_config():
+    """
+    返回配置的**脱敏视图**：敏感项只报「是否已设置」与长度，绝不回内容。
+
+    界面拿不到授权码内容，就不会因为前端被注入、误截图或日志而泄露。
+    """
+    view = ENV_FILE.masked()
+    return {
+        "values": view,
+        "editable": sorted(view.keys()),
+        "models": butler_core.list_available_models(),
+    }
+
+
+@app.put("/api/config")
+async def api_put_config(payload: Dict[str, Any]):
+    """
+    保存配置并**即时生效**，不必重启应用。
+
+    流程：校验 -> 写 .env -> 就地应用到 settings -> 重建受影响的部分。
+    任何一步失败都会把原因说清楚，而不是只回一个 500。
+    """
+    if state.busy.locked():
+        raise HTTPException(status_code=409, detail="正在处理上一轮，请稍候再改配置")
+
+    raw = (payload or {}).get("values") or {}
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail="values 必须是一个对象")
+
+    # 敏感项留空 = 「不要改动这一项」，而不是「清空它」。
+    # 界面根本拿不到内容，所以它只能留空；若把空值当成清空，
+    # 用户每改一次别的字段就会把授权码抹掉。
+    changes: Dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or key not in ENV_FILE.masked():
+            continue
+        text = "" if value is None else str(value)
+        if key in SECRET_KEYS and text.strip() == "":
+            continue
+        changes[key] = text.strip()
+
+    # 「清空某个非敏感项」用显式标记表达，避免与「没填」混淆
+    for key in (payload or {}).get("clear") or []:
+        if isinstance(key, str) and key in ENV_FILE.masked():
+            changes[key] = ""
+
+    if not changes:
+        return {"ok": True, "changed": [], "message": "没有需要保存的改动"}
+
+    problems = validate_smtp_input(changes)
+    if problems:
+        raise HTTPException(status_code=400, detail="\n".join(problems))
+
+    async with state.busy:
+        try:
+            result = ENV_FILE.update(changes)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except OSError as e:
+            raise HTTPException(status_code=500, detail="写入 .env 失败：%s" % e)
+
+        # 就地应用，让所有已绑定 settings 的模块立刻看到新值
+        applied = apply_env_to_settings(ENV_FILE.as_dict())
+
+        # 让发送器丢掉旧连接、用新凭据重连
+        try:
+            from email_tools import email_tools
+
+            email_tools.reload_config()
+        except Exception as e:  # noqa: BLE001
+            state.log("警告：重建发送器失败（%s）" % str(e)[:80])
+
+        # 模型相关配置改了要重建智能体
+        session_keys = set(applied) & RESTART_KEYS
+        rebuilt = False
+        if session_keys and state.session is not None:
+            try:
+                await state.session.use_model(butler_core.active_ref(), on_step=state.log)
+                rebuilt = True
+            except Exception as e:  # noqa: BLE001
+                state.error = str(e)[:300]
+
+    return {
+        "ok": True,
+        "changed": result["changed"],
+        "added": result["added"],
+        "applied": sorted(applied),
+        "backup": result["backup"],
+        "rebuilt": rebuilt,
+        "message": "已保存并生效。",
+    }
+
+
+@app.post("/api/config/test")
+async def api_test_config(payload: Dict[str, Any]):
+    """
+    用**当前生效的配置**测一次 SMTP 连通性。
+
+    刻意不接收调用方传来的凭据：那等于开了一个「拿任意凭据去连服务器」
+    的接口。要测试就先保存，再测。
+    """
+    problems = validate_smtp_input(ENV_FILE.as_dict())
+    if problems:
+        raise HTTPException(status_code=400, detail="\n".join(problems))
+
+    from email_tools import email_tools
 
     try:
-        await state.session.use_model(model, on_step=state.log)
+        email_tools.reload_config()
+        result = await email_tools.check_email_config()
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=str(e)[:300])
-    return {"ok": True, "current": state.session.model}
+        raise HTTPException(status_code=400, detail="连接测试失败：%s" % str(e)[:300])
+
+    return result
 
 
 # ---------------------------------------------------------------------------

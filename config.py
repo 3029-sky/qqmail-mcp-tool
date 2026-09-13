@@ -34,9 +34,25 @@ class Settings(BaseSettings):
     #: 只要设置了值，所有对 /mcp 的请求都必须携带 Authorization: Bearer <token>。
     mcp_auth_token: Optional[str] = None
 
-    # Ollama配置
+    # Ollama配置（本地模型）
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:3b"
+
+    # DeepSeek 配置（云端模型，可选）
+    #
+    # 为什么要支持它：3B 本地模型在附件名、多轮改写这些地方会出错，
+    # 而它跑在本地是为了省事而非省钱。DeepSeek 走 OpenAI 兼容接口，
+    # 把这几个字段留空即等于不启用，不影响纯本地使用。
+    #: API Key。为 None 时界面上的 DeepSeek 选项会被标为「需要 API Key」。
+    deepseek_api_key: Optional[str] = None
+    #: DeepSeek 的 OpenAI 兼容端点
+    deepseek_base_url: str = "https://api.deepseek.com/v1"
+    #: 默认模型（deepseek-chat 是通用对话模型）
+    deepseek_model: str = "deepseek-chat"
+
+    #: 当前选用的模型，格式为 "provider:model"。
+    #: 留空表示按 ollama_model 走本地。界面切模型时会写这一项。
+    active_model: Optional[str] = None
 
     # 发送确认（IMAP 回读）
     #: 是否在发送后用 IMAP 回读「已发送」来确认 QQ 确实接收并归档。

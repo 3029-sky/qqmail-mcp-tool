@@ -262,6 +262,78 @@
   .example:hover { border-color: var(--accent-dim); color: var(--text); }
   .example b { color: var(--text); font-weight: 600; }
 
+  /* ---------- 设置对话框 ---------- */
+  .overlay {
+    position: fixed; inset: 0; z-index: 60;
+    background: rgba(0,0,0,.55);
+    display: none; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .overlay.open { display: flex; }
+
+  .modal {
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    width: 100%; max-width: 560px;
+    max-height: 100%; display: flex; flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0,0,0,.5);
+  }
+  .modal-head {
+    padding: 16px 20px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .modal-head h3 { margin: 0; font-size: 15px; font-weight: 600; }
+  .modal-close {
+    border: 0; background: none; color: var(--text-mute);
+    font-size: 20px; cursor: pointer; line-height: 1; padding: 0 4px;
+  }
+  .modal-close:hover { color: var(--text); }
+
+  .modal-body { padding: 18px 20px; overflow-y: auto; }
+
+  .field { margin-bottom: 15px; }
+  .field label {
+    display: block; font-size: 12.5px; margin-bottom: 5px;
+    color: var(--text-dim); font-weight: 600;
+  }
+  .field input, .field select {
+    width: 100%; padding: 8px 11px; font-size: 13px;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    font-family: inherit;
+  }
+  .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+  .field .note { font-size: 11.5px; color: var(--text-mute); margin-top: 5px; }
+  .field .note.warn { color: var(--warn); }
+  .field .note.ok { color: var(--ok); }
+
+  .section-title {
+    font-size: 12px; font-weight: 700; color: var(--text-mute);
+    text-transform: none; letter-spacing: .5px;
+    margin: 22px 0 12px; padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+  .section-title:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+
+  .modal-foot {
+    padding: 14px 20px; border-top: 1px solid var(--border);
+    display: flex; align-items: center; gap: 9px;
+  }
+  .modal-foot .spacer { flex: 1; }
+  .btn.primary {
+    background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
+  }
+  .btn.primary:hover:not(:disabled) { background: #5c98ff; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  .test-result {
+    margin-top: 10px; padding: 9px 12px; border-radius: 8px;
+    font-size: 12.5px; white-space: pre-wrap;
+  }
+  .test-result.ok  { background: rgba(52,199,89,.12); border: 1px solid var(--ok); }
+  .test-result.err { background: rgba(255,90,95,.1); border: 1px solid var(--err); }
+
   /* ---------- 提示条 ---------- */
   .toasts {
     position: fixed; right: 18px; bottom: 18px;
@@ -319,8 +391,9 @@
       <span class="spacer"></span>
       <div class="model-picker">
         <label for="modelSelect">模型</label>
-        <select id="modelSelect" title="切换本地模型"></select>
+        <select id="modelSelect" title="切换模型"></select>
       </div>
+      <button class="btn" id="btnSettings" title="邮箱与模型设置">设置</button>
       <button class="btn" id="btnNew" title="清空对话历史">新对话</button>
     </header>
 
@@ -363,6 +436,71 @@
 
 <div class="toasts" id="toasts"></div>
 
+<!-- ==================== 设置对话框 ==================== -->
+<div class="overlay" id="settingsOverlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="modal-head">
+      <h3 id="settingsTitle">设置</h3>
+      <button class="modal-close" id="settingsClose" title="关闭">×</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="section-title">QQ 邮箱（发件账号）</div>
+
+      <div class="field">
+        <label for="cfgEmail">邮箱地址</label>
+        <input id="cfgEmail" type="text" autocomplete="off" placeholder="你的QQ邮箱@qq.com">
+        <div class="note" id="noteEmail"></div>
+      </div>
+
+      <div class="field">
+        <label for="cfgPassword">授权码</label>
+        <input id="cfgPassword" type="password" autocomplete="new-password"
+               placeholder="留空表示不修改">
+        <div class="note" id="notePassword"></div>
+      </div>
+
+      <div class="field">
+        <label for="cfgServer">SMTP 服务器 / 端口</label>
+        <div style="display:flex; gap:8px;">
+          <input id="cfgServer" type="text" placeholder="smtp.qq.com" style="flex:2">
+          <input id="cfgPort" type="text" placeholder="465" style="flex:1">
+        </div>
+      </div>
+
+      <div class="section-title">模型</div>
+
+      <div class="field">
+        <label for="cfgActive">当前使用的模型</label>
+        <select id="cfgActive"></select>
+        <div class="note" id="noteActive"></div>
+      </div>
+
+      <div class="field">
+        <label for="cfgOllamaModel">本地默认模型（Ollama）</label>
+        <input id="cfgOllamaModel" type="text" placeholder="qwen2.5:3b">
+        <div class="note">换更大的模型前先拉取，例如 ollama pull qwen2.5:7b</div>
+      </div>
+
+      <div class="field">
+        <label for="cfgDeepseekKey">DeepSeek API Key</label>
+        <input id="cfgDeepseekKey" type="password" autocomplete="new-password"
+               placeholder="留空表示不修改">
+        <div class="note" id="noteDeepseek"></div>
+      </div>
+
+      <div class="test-result" id="testResult" style="display:none"></div>
+    </div>
+
+    <div class="modal-foot">
+      <button class="btn" id="btnTest">测试邮箱连接</button>
+      <span class="spacer"></span>
+      <button class="btn" id="settingsCancel">取消</button>
+      <button class="btn primary" id="btnSave">保存并生效</button>
+    </div>
+  </div>
+</div>
+
 <script>
 "use strict";
 
@@ -396,7 +534,6 @@ async function api(path, options = {}) {
 // 本轮对话要附带的文件（粘贴或选择进来的）
 let pending = [];
 let busy = false;
-let currentModel = "";
 
 /* ============================================================
    附件栏
@@ -828,52 +965,223 @@ $("send").onclick = send;
 /* ============================================================
    模型切换
    ============================================================ */
+let allModels = [];       // 服务端返回的完整模型列表（含可用性与原因）
+let currentRef = "";      // 当前模型引用 provider:model
+
+function buildModelOptions(select, models, current) {
+  select.innerHTML = "";
+
+  // 本地的排前面，云端在后；都按名字排
+  const sorted = models.slice().sort((a, b) => {
+    if (a.provider !== b.provider) return a.provider === "ollama" ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  for (const m of sorted) {
+    const opt = document.createElement("option");
+    opt.value = m.ref;
+
+    // 不可用的直接标出来，并说明为什么——比灰掉不说原因有用
+    opt.textContent = m.available
+      ? m.label
+      : m.label + "　—　" + (m.reason || "不可用");
+    opt.disabled = !m.available;
+    opt.dataset.available = m.available ? "1" : "0";
+    opt.dataset.reason = m.reason || "";
+    if (m.ref === current) opt.selected = true;
+    select.appendChild(opt);
+  }
+
+  // 当前模型不在列表里（例如还没装）也要显示出来，否则下拉框会误导
+  if (current && !sorted.some((m) => m.ref === current)) {
+    const opt = document.createElement("option");
+    opt.value = current;
+    opt.textContent = current + "　—　未安装";
+    opt.selected = true;
+    select.appendChild(opt);
+  }
+}
+
 async function loadModels() {
   let data;
   try { data = await api("/api/models"); }
-  catch (e) { return; }
+  catch (e) { toast("读取模型列表失败：" + e.message, "err"); return; }
 
-  const sel = $("modelSelect");
-  sel.innerHTML = "";
-  const models = data.installed.length ? data.installed : [data.current];
-  for (const m of models) {
-    const opt = document.createElement("option");
-    opt.value = m;
-    opt.textContent = m;
-    if (m === data.current) opt.selected = true;
-    sel.appendChild(opt);
+  allModels = data.models || [];
+  currentRef = data.current || "";
+
+  buildModelOptions($("modelSelect"), allModels, currentRef);
+  buildModelOptions($("cfgActive"), allModels, currentRef);
+
+  const note = $("noteActive");
+  if (note) {
+    const unusable = allModels.filter((m) => !m.available);
+    note.textContent = unusable.length
+      ? "灰色项当前不可用：" + unusable.map((m) => m.label + "（" + m.reason + "）").join("；")
+      : "";
+    note.className = "note";
   }
-  // 当前模型不在已装列表里也要显示出来，否则下拉框会误导
-  if (!models.includes(data.current)) {
-    const opt = document.createElement("option");
-    opt.value = data.current;
-    opt.textContent = data.current + "（未安装）";
-    opt.selected = true;
-    sel.appendChild(opt);
-  }
-  currentModel = data.current;
 }
 
-$("modelSelect").addEventListener("change", async (ev) => {
-  const model = ev.target.value;
-  const sel = $("modelSelect");
-  sel.disabled = true;
-  toast("正在切换到 " + model + "…");
+async function switchModel(ref, selectEl) {
+  const info = allModels.find((m) => m.ref === ref);
+  if (info && !info.available) {
+    toast(info.label + " 当前不可用：" + info.reason, "warn");
+    selectEl.value = currentRef;      // 回滚选择，避免界面与实际不一致
+    return false;
+  }
+
+  const previous = currentRef;
+  selectEl.disabled = true;
+  toast("正在切换到 " + ref + "…");
 
   try {
     const data = await api("/api/models", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model }),
+      body: JSON.stringify({ model: ref }),
     });
-    currentModel = data.current;
-    toast("已切换到 " + data.current, "ok");
-    addMessage("butler", "已切换到模型 " + data.current + "。对话历史保留，可以直接说「主题改成…」。");
+    currentRef = data.current;
+    // 两个下拉框保持一致
+    $("modelSelect").value = currentRef;
+    $("cfgActive").value = currentRef;
+    toast("已切换到 " + currentRef, "ok");
+    addMessage("butler", "已切换到模型 " + currentRef + "。对话历史保留，可以直接说「主题改成…」。");
+    return true;
   } catch (e) {
     toast("切换失败：" + e.message, "err");
-    sel.value = currentModel;      // 回滚显示，避免界面与实际不一致
+    selectEl.value = previous;
+    currentRef = previous;
+    return false;
   } finally {
-    sel.disabled = false;
+    selectEl.disabled = false;
+  }
+}
+
+$("modelSelect").addEventListener("change", (ev) => switchModel(ev.target.value, ev.target));
+$("cfgActive").addEventListener("change", (ev) => switchModel(ev.target.value, ev.target));
+
+/* ============================================================
+   设置对话框
+   ============================================================ */
+function openSettings() {
+  $("settingsOverlay").classList.add("open");
+  loadConfig();
+}
+
+function closeSettings() {
+  $("settingsOverlay").classList.remove("open");
+  $("testResult").style.display = "none";
+}
+
+async function loadConfig() {
+  let data;
+  try { data = await api("/api/config"); }
+  catch (e) { toast("读取配置失败：" + e.message, "err"); return; }
+
+  const v = data.values || {};
+
+  $("cfgEmail").value = (v.SMTP_EMAIL && v.SMTP_EMAIL.value) || "";
+  $("cfgServer").value = (v.SMTP_SERVER && v.SMTP_SERVER.value) || "";
+  $("cfgPort").value = (v.SMTP_PORT && v.SMTP_PORT.value) || "";
+  $("cfgOllamaModel").value = (v.OLLAMA_MODEL && v.OLLAMA_MODEL.value) || "";
+
+  // 敏感项只回长度，不回内容——所以输入框永远留空，
+  // 提示里说明「已设置」与否，用户想改才填。
+  const pw = v.SMTP_PASSWORD || {};
+  $("cfgPassword").value = "";
+  $("notePassword").textContent = pw.set
+    ? "已设置（" + pw.length + " 位），留空则表示不修改"
+    : "尚未设置。QQ 邮箱的授权码固定 16 位，不是 QQ 密码。";
+  $("notePassword").className = "note" + (pw.set ? " ok" : " warn");
+
+  const key = v.DEEPSEEK_API_KEY || {};
+  $("cfgDeepseekKey").value = "";
+  $("noteDeepseek").textContent = key.set
+    ? "已设置，留空表示不修改"
+    : "未设置。要用 DeepSeek 云端模型需先在此填入 API Key。";
+  $("noteDeepseek").className = "note" + (key.set ? " ok" : "");
+
+  // 模型下拉：始终按最新的可用性重建
+  await loadModels();
+}
+
+async function saveConfig() {
+  const values = {
+    SMTP_EMAIL: $("cfgEmail").value.trim(),
+    SMTP_SERVER: $("cfgServer").value.trim(),
+    SMTP_PORT: $("cfgPort").value.trim(),
+    OLLAMA_MODEL: $("cfgOllamaModel").value.trim(),
+  };
+  // 敏感项：只有真的填了才提交（留空 = 不改）
+  const pw = $("cfgPassword").value;
+  if (pw.trim()) values.SMTP_PASSWORD = pw.trim();
+  const dk = $("cfgDeepseekKey").value;
+  if (dk.trim()) values.DEEPSEEK_API_KEY = dk.trim();
+
+  const btn = $("btnSave");
+  btn.disabled = true;
+  try {
+    const data = await api("/api/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ values }),
+    });
+
+    const parts = [];
+    if (data.changed && data.changed.length) parts.push("已更新 " + data.changed.join("、"));
+    if (data.added && data.added.length) parts.push("已新增 " + data.added.join("、"));
+    toast(parts.length ? parts.join("；") + "，已生效" : (data.message || "已保存"), "ok");
+
+    // 邮箱地址变了，顶栏要跟着变
+    const info = await api("/api/info");
+    $("fromAddr").textContent = "发件邮箱 " + info.email;
+
+    $("cfgPassword").value = "";
+    $("cfgDeepseekKey").value = "";
+    await loadConfig();
+  } catch (e) {
+    toast("保存失败：" + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function testConfig() {
+  const box = $("testResult");
+  const btn = $("btnTest");
+  btn.disabled = true;
+  box.style.display = "block";
+  box.className = "test-result";
+  box.textContent = "正在连接…";
+
+  try {
+    const r = await api("/api/config/test", { method: "POST" });
+    const ok = r.success !== false;
+    box.className = "test-result " + (ok ? "ok" : "err");
+    box.textContent = ok
+      ? "✅ " + (r.message || "连接正常")
+      : "❌ " + (r.message || "连接失败") +
+        (r.error ? "\n" + r.error : "");
+  } catch (e) {
+    box.className = "test-result err";
+    box.textContent = "❌ " + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$("btnSettings").onclick = openSettings;
+$("settingsClose").onclick = closeSettings;
+$("settingsCancel").onclick = closeSettings;
+$("btnSave").onclick = saveConfig;
+$("btnTest").onclick = testConfig;
+$("settingsOverlay").addEventListener("click", (ev) => {
+  if (ev.target === $("settingsOverlay")) closeSettings();   // 点遮罩关闭
+});
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && $("settingsOverlay").classList.contains("open")) {
+    closeSettings();
   }
 });
 

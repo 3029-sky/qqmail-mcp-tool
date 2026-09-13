@@ -55,7 +55,7 @@
 | **SMTP 连接复用** | 专用工作线程独占连接，实测 5 封邮件仅建立 1 条 TLS 连接 |
 | **结构化日志** | 可选单行 JSON 输出，便于日志系统采集 |
 | **发送指标** | 成功率、延迟分位数、失败原因分布，经 `/metrics` 暴露 |
-| **零外部依赖的测试** | 替换 SMTP/IMAP 层与注入替身，354 个用例不联网、不碰真实邮箱、约 5 秒跑完 |
+| **零外部依赖的测试** | 替换 SMTP/IMAP 层与注入替身，403 个用例不联网、不碰真实邮箱、约 5 秒跑完 |
 
 ---
 
@@ -151,7 +151,7 @@ copy .env.example .env          # Windows
 >
 > ```bash
 > copy .env.test .env      # 只有假数据，测试全程不发起真实请求
-> python -m pytest -q      # 应看到 354 passed
+> python -m pytest -q      # 应看到 403 passed
 > ```
 >
 > `SMTP_EMAIL` 与 `SMTP_PASSWORD` 是**必填**项，两者都缺失时测试会在
@@ -189,12 +189,42 @@ python webui.py --no-open  # 只启动服务，自己在浏览器打开 http://1
 | 功能 | 说明 |
 |---|---|
 | **直接粘贴图片/文件** | 在输入框按 `Ctrl+V`，图片与压缩包直接作为附件 |
-| **切换模型** | 右上角下拉框，列出 Ollama 里已装的模型，切换后对话历史保留 |
+| **应用内改配置** | 右上角「设置」：改 QQ 邮箱、授权码、模型，**保存即生效**，不必重启 |
+| **切换模型** | 下拉框列出本地模型与 DeepSeek 云端模型；不可用的会说明原因 |
 | **附件面板** | 左侧列出附件目录，图片显示缩略图，可删除、点击填入输入框 |
 | **动作可见** | 它决定调用哪个工具、参数是什么，**在工具执行前**就显示成卡片 |
 
 窗口是**本地专用**的（只监听 `127.0.0.1:8765`）。这个界面能直接发邮件，
 不要把它暴露到局域网或公网。
+
+#### 用 DeepSeek 云端模型（可选）
+
+本地 3B 模型在附件名、多轮改写这些地方会出错；DeepSeek 明显更准。三步启用：
+
+```bash
+# 1. 装依赖（只用本地模型的话不需要它）
+.\venv\Scripts\python.exe -m pip install langchain-openai
+```
+
+2. 到 <https://platform.deepseek.com> 申请 API Key
+3. 重启应用 → 右上角「设置」→ 填入「DeepSeek API Key」→ 保存 →
+   在模型下拉框里选 `deepseek:deepseek-chat`
+
+没配 Key 时 DeepSeek 选项也会**列出来**并标注「需要先填 DeepSeek API Key」——
+藏起来的话用户根本不知道有这个能力。
+
+#### 关于应用内改配置
+
+「设置」里保存的改动会写进 `.env` 并**立即生效**（重建发送器与智能体），
+不需要重启应用。两处刻意的设计：
+
+- **授权码只回长度、不回内容**。界面永远拿不到授权码，就不会因为前端被注入、
+  误截图或日志而泄露。因此密码框始终是空的，**留空表示不修改**——若把空值
+  当成清空，用户每改一次别的字段就会把授权码抹掉。
+- **只允许改白名单里的键**。`MCP_AUTH_TOKEN`、监听地址这类东西不能从网页改；
+  这个入口若能改任意配置，就等于把服务端配置暴露给了浏览器。
+
+每次写入前会在同目录留一份 `.env.bak`，并保留文件里原有的注释。
 
 ### 6.（可选）使用终端客户端
 
@@ -451,7 +481,7 @@ python -m pytest -q         # 精简输出
 python -m pytest tests/test_email_tools.py -v
 ```
 
-套件共 354 个用例，**全程不发起真实网络请求**：
+套件共 403 个用例，**全程不发起真实网络请求**：
 
 | 文件 | 关注点 |
 |---|---|
@@ -460,9 +490,10 @@ python -m pytest tests/test_email_tools.py -v
 | `tests/test_delivery.py` | **发送确认**：主题 MIME 解码匹配、收件人校验、重试轮询、失败降级 |
 | `tests/test_retry.py` | **重试分类**：4xx 可重试 / 5xx 不可重试、退避上限、次数耗尽的传播 |
 | `tests/test_idempotency.py` | **幂等键**：重复请求不再发送、TTL 过期、卡死占用回收 |
-| `tests/test_butler_core.py` | **共用后端**：回复提取（不取错工具返回）、事件转换、流式顺序、历史累积与截断 |
+| `tests/test_butler_core.py` | **共用后端**：回复提取（不取错工具返回）、事件转换、流式顺序、历史累积与截断、模型引用解析 |
+| `tests/test_envfile.py` | **.env 读写**：保留注释、原子写、脱敏读、白名单、CRLF 保持 |
 | `tests/test_email_butler.py` | **终端界面**：多轮记忆、只显示本轮动作、`/粘贴` 指令、GBK 下的输出加固 |
-| `tests/test_webui.py` | **网页后端**：路径穿越防护、上传落盘（重名/超限/空文件）、SSE 事件顺序 |
+| `tests/test_webui.py` | **网页后端**：路径穿越防护、上传落盘、SSE 事件顺序、配置保存即时生效与凭据不泄露 |
 | `tests/test_open_window.py` | **窗口启动器**：`--app` 与 `--user-data-dir` 参数拼装、找不到浏览器时的降级 |
 | `tests/test_clipboard.py` | **剪贴板导入**：位图逐像素解析（行对齐、自下而上、BGRA→RGB）、文件复制、超限跳过、PNG 落地 |
 | `tests/test_email_tools.py` | MIME 结构、UTF-8 编码、附件、连接复用、指标、错误处理 |
@@ -814,6 +845,7 @@ qqmail-mcp-tool/
 │   └── index.html           # 前端界面（原生 HTML/CSS/JS，无构建步骤）
 ├── email_butler.py          # 终端界面（自动起服务器 + 多轮记忆）
 ├── clipboard.py             # 剪贴板导入（终端 /粘贴 指令：图片与文件）
+├── envfile.py               # .env 读写（应用内改配置：保留注释、原子写、脱敏读）
 ├── 启动应用.bat              # 双击启动图形界面（仅含 ASCII）
 ├── 启动管家.bat              # 双击启动终端界面（仅含 ASCII）
 ├── create_attachments.py    # 生成示例附件（报表/纪要/配置）
@@ -826,7 +858,7 @@ qqmail-mcp-tool/
 ├── .env.example             # 配置模板（可提交）
 ├── .env.test                # CI 用占位配置
 ├── .github/workflows/tests.yml
-├── tests/                   # 354 个用例
+├── tests/                   # 403 个用例
 │   ├── conftest.py
 │   ├── test_config.py
 │   ├── test_auth.py
@@ -838,6 +870,7 @@ qqmail-mcp-tool/
 │   ├── test_webui.py
 │   ├── test_open_window.py
 │   ├── test_clipboard.py
+│   ├── test_envfile.py
 │   ├── test_email_tools.py
 │   ├── test_mcp_server.py
 │   └── test_tool_defs.py

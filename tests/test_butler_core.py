@@ -303,3 +303,137 @@ def test_check_ollama_accepts_explicit_model(monkeypatch):
     assert butler_core.check_ollama("gemma3:1b") is None
     problem = butler_core.check_ollama("qwen2.5:7b")
     assert problem is not None and "qwen2.5:7b" in problem
+
+
+# ---------------------------------------------------------------------------
+# 模型引用 provider:model
+# ---------------------------------------------------------------------------
+
+def test_parse_ref_splits_on_first_colon():
+    """
+    Ollama 的模型名自带冒号标签（qwen2.5:3b），
+    所以只能按**第一个**冒号切分，否则模型名会被切碎。
+    """
+    import butler_core
+
+    assert butler_core.parse_ref("ollama:qwen2.5:3b") == ("ollama", "qwen2.5:3b")
+    assert butler_core.parse_ref("deepseek:deepseek-chat") == ("deepseek", "deepseek-chat")
+
+
+def test_parse_ref_defaults_to_ollama_without_prefix():
+    """
+    不带 provider 前缀时按 Ollama 处理。
+
+    这样旧写法（.env 里只写 `OLLAMA_MODEL=qwen2.5:3b`）仍然可用，
+    不会因为引入 provider 概念就把老配置作废。
+    """
+    import butler_core
+
+    assert butler_core.parse_ref("qwen2.5:3b") == ("ollama", "qwen2.5:3b")
+    assert butler_core.parse_ref("llama3") == ("ollama", "llama3")
+
+
+def test_parse_ref_handles_empty():
+    import butler_core
+
+    provider, name = butler_core.parse_ref("")
+    assert provider == "ollama"
+    assert name, "空引用应回退到配置里的默认模型"
+
+
+def test_make_ref_roundtrips():
+    import butler_core
+
+    ref = butler_core.make_ref("ollama", "qwen2.5:3b")
+    assert ref == "ollama:qwen2.5:3b"
+    assert butler_core.parse_ref(ref) == ("ollama", "qwen2.5:3b")
+
+
+def test_active_ref_uses_configured_selection(monkeypatch):
+    """界面选过模型就记住它，下次启动仍是那个。"""
+    import butler_core
+    from config import settings
+
+    monkeypatch.setattr(settings, "active_model", "deepseek:deepseek-chat")
+    assert butler_core.active_ref() == "deepseek:deepseek-chat"
+
+    monkeypatch.setattr(settings, "active_model", None)
+    monkeypatch.setattr(settings, "ollama_model", "qwen2.5:3b")
+    assert butler_core.active_ref() == "ollama:qwen2.5:3b"
+
+
+def test_check_model_requires_deepseek_key(monkeypatch):
+    """没配 Key 时选 DeepSeek 要给出可操作的提示，而不是让它跑到报错。"""
+    import butler_core
+    from config import settings
+
+    monkeypatch.setattr(settings, "deepseek_api_key", None)
+    problem = butler_core.check_model("deepseek:deepseek-chat")
+
+    assert problem is not None
+    assert "DEEPSEEK_API_KEY" in problem, "要指出该填哪个配置项"
+
+
+def test_check_model_accepts_deepseek_with_key(monkeypatch):
+    import butler_core
+    from config import settings
+
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+    assert butler_core.check_model("deepseek:deepseek-chat") is None
+
+
+def test_list_available_models_includes_deepseek_always(monkeypatch):
+    """
+    DeepSeek 选项**始终**列出，没配 Key 时标成不可用并说明原因。
+
+    藏起来的话用户根本不知道有这个能力。
+    """
+    import butler_core
+    from config import settings
+
+    monkeypatch.setattr(butler_core, "list_ollama_models", lambda: ["qwen2.5:3b"])
+    monkeypatch.setattr(settings, "deepseek_api_key", None)
+
+    items = butler_core.list_available_models()
+    by_ref = {m["ref"]: m for m in items}
+
+    assert by_ref["ollama:qwen2.5:3b"]["available"] is True
+    deepseek = [m for m in items if m["provider"] == "deepseek"]
+    assert deepseek
+    assert all(not m["available"] for m in deepseek)
+    assert all("API Key" in m["reason"] for m in deepseek)
+
+
+def test_build_chat_model_makes_ollama(monkeypatch):
+    import butler_core
+
+    model = butler_core.build_chat_model("ollama:qwen2.5:3b")
+    assert type(model).__name__ == "ChatOllama"
+    assert model.model == "qwen2.5:3b"
+
+
+def test_build_chat_model_explains_missing_deepseek_dependency(monkeypatch):
+    """
+    没装 langchain-openai 时，提示要能直接照抄安装命令。
+
+    否则用户只会看到一句 ModuleNotFoundError。
+    """
+    import builtins
+
+    import butler_core
+    from config import settings
+
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "langchain_openai":
+            raise ImportError("No module named 'langchain_openai'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    with pytest.raises(RuntimeError) as e:
+        butler_core.build_chat_model("deepseek:deepseek-chat")
+    assert "pip install langchain-openai" in str(e.value)

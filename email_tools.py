@@ -503,6 +503,20 @@ class QQMailSender:
         self._worker = None          # 延迟创建，避免未使用连接时也起线程
         self._worker_lock = threading.Lock()
 
+    def reload_config(self) -> None:
+        """
+        重新从配置读取凭据并丢弃旧连接。
+
+        为什么必须丢弃连接：凭据是**构造时**复制进实例属性的，
+        而且已建立的 SMTP 会话是用旧账号认证过的。只改属性不重连，
+        会出现「界面显示已改、实际还在用旧账号发信」这种最难查的问题。
+        """
+        self.close()
+        self.smtp_server = settings.smtp_server
+        self.smtp_port = settings.smtp_port
+        self.smtp_email = settings.smtp_email
+        self.smtp_password = settings.smtp_password
+
     # -- 连接 ---------------------------------------------------------------
 
     @property
@@ -866,6 +880,15 @@ class QQMailTools:
         测试写入真实 attachments/ 的隔离事故）。
         """
         return settings.attachment_dir
+
+    def reload_config(self) -> None:
+        """
+        配置改动后重建发送器。
+
+        网页界面上改邮箱/授权码之后会调用它，让新凭据立刻生效，
+        不必重启应用。
+        """
+        self.sender.reload_config()
 
     async def send_text_email(
         self,

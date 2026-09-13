@@ -30,11 +30,23 @@ __all__ = [
     "MAX_HISTORY_MESSAGES",
     "MCP_URL",
     "HEALTH_URL",
+    "OLLAMA",
+    "DEEPSEEK",
+    "DEEPSEEK_MODELS",
+    "make_ref",
+    "parse_ref",
+    "active_ref",
+    "check_model",
+    "build_chat_model",
+    "deepseek_configured",
+    "list_available_models",
     "check_ollama",
     "list_ollama_models",
     "is_server_up",
     "list_attachments",
     "extract_reply",
+    "final_reply",
+    "drain_events",
     "tool_call_events",
     "tool_result_event",
     "MCPServerProcess",
@@ -122,11 +134,155 @@ def list_ollama_models() -> List[str]:
         return []
 
 
+# ---------------------------------------------------------------------------
+# 模型引用：provider:model
+# ---------------------------------------------------------------------------
+
+OLLAMA = "ollama"
+DEEPSEEK = "deepseek"
+
+#: DeepSeek 用 OpenAI 兼容接口，这些是它当前提供的对话模型。
+#: 不写死成「只认某一个」，是为了官方上新模型时不必改代码。
+DEEPSEEK_MODELS = ["deepseek-chat", "deepseek-reasoner"]
+
+
+def make_ref(provider: str, model: str) -> str:
+    """把 provider 与模型名拼成引用串，例如 ollama:qwen2.5:3b。"""
+    return "%s:%s" % (provider, model)
+
+
+def parse_ref(ref: str) -> tuple:
+    """
+    解析模型引用，返回 (provider, model_name)。
+
+    格式为 `provider:model`，其中 model 本身可以带冒号
+    （Ollama 的标签就是这样，例如 `qwen2.5:3b`），
+    所以这里只按**第一个**冒号切分。
+
+    不带 provider 前缀时按 Ollama 处理——这样旧写法
+    （`.env` 里只写 `OLLAMA_MODEL=qwen2.5:3b`）仍然可用。
+    """
+    ref = (ref or "").strip()
+    if not ref:
+        return OLLAMA, settings.ollama_model
+    if ":" not in ref:
+        return OLLAMA, ref
+    head, rest = ref.split(":", 1)
+    if head in (OLLAMA, DEEPSEEK):
+        return head, rest
+    return OLLAMA, ref
+
+
+def deepseek_configured() -> bool:
+    """是否配好了 DeepSeek 的 API Key。"""
+    return bool((settings.deepseek_api_key or "").strip())
+
+
+def active_ref() -> str:
+    """
+    当前模型引用。
+
+    优先用 `ACTIVE_MODEL`（界面切模型时写入），
+    没设过就退回本地默认模型 `OLLAMA_MODEL`。
+    """
+    configured = (settings.active_model or "").strip()
+    if configured:
+        return configured
+    return make_ref(OLLAMA, settings.ollama_model)
+
+
+def check_model(ref: str) -> Optional[str]:
+    """
+    校验某个模型引用是否可用。
+
+    返回 None 表示可用；否则返回一段可直接展示给用户的说明。
+    """
+    provider, name = parse_ref(ref)
+
+    if provider == DEEPSEEK:
+        if not deepseek_configured():
+            return (
+                "还没有配置 DeepSeek API Key。\n"
+                "请在「设置」里填入 DEEPSEEK_API_KEY（在 platform.deepseek.com 申请），"
+                "或改回本地模型。"
+            )
+        return None
+
+    return check_ollama(name)
+
+
+def build_chat_model(ref: str):
+    """
+    按引用构造可供 create_agent 使用的对话模型。
+
+    必须用 langchain_ollama / langchain_openai 的类：
+    langchain_community 里的同名 ChatOllama 没有实现 bind_tools，
+    会让 create_agent 抛 NotImplementedError（实测踩过）。
+    """
+    provider, name = parse_ref(ref)
+
+    if provider == DEEPSEEK:
+        try:
+            from langchain_openai import ChatOpenAI   # noqa: PLC0415
+        except ImportError as e:  # noqa: BLE001
+            raise RuntimeError(
+                "使用 DeepSeek 需要先安装 langchain-openai：\n"
+                "    .\\venv\\Scripts\\python.exe -m pip install langchain-openai\n"
+                "（本地 Ollama 模型不需要它）"
+            ) from e
+
+        return ChatOpenAI(
+            model=name,
+            base_url=settings.deepseek_base_url,
+            api_key=(settings.deepseek_api_key or "").strip(),
+            temperature=0.3,
+        )
+
+    from langchain_ollama import ChatOllama       # noqa: PLC0415
+
+    return ChatOllama(
+        base_url=settings.ollama_base_url, model=name, temperature=0.3,
+    )
+
+
+def list_available_models() -> List[Dict[str, Any]]:
+    """
+    列出界面上可选的模型，含本地的与云端的。
+
+    每个条目带 `available` 与 `reason`，让界面能直接说明
+    「为什么这个选项不能选」——比只显示一个灰掉的项有用得多。
+    """
+    items: List[Dict[str, Any]] = []
+
+    for name in list_ollama_models():
+        items.append({
+            "ref": make_ref(OLLAMA, name),
+            "provider": OLLAMA,
+            "name": name,
+            "label": "%s（本地）" % name,
+            "available": True,
+            "reason": "",
+        })
+
+    configured = deepseek_configured()
+    for name in DEEPSEEK_MODELS:
+        items.append({
+            "ref": make_ref(DEEPSEEK, name),
+            "provider": DEEPSEEK,
+            "name": name,
+            "label": "%s（DeepSeek 云端）" % name,
+            "available": configured,
+            "reason": "" if configured else "需要先填 DeepSeek API Key",
+        })
+
+    return items
+
+
 def check_ollama(model: Optional[str] = None) -> Optional[str]:
     """
     检查 Ollama 是否可用、指定模型是否已拉取。
 
-    model 省略时用配置里的默认模型。
+    model 省略时用配置里的默认本地模型。
     返回 None 表示一切正常；否则返回一段可直接展示的提示。
     """
     wanted = model or settings.ollama_model
@@ -358,7 +514,9 @@ class AgentSession:
     """
 
     def __init__(self, model: Optional[str] = None, start_server: bool = True):
-        self.model = model or settings.ollama_model
+        #: 模型引用（provider:model）。省略时用配置里的当前选择。
+        self.model = model or active_ref()
+        self.provider, self.model_name = parse_ref(self.model)
         self.agent = None
         self.tools: List[Any] = []
         self.tool_names: List[str] = []
@@ -399,26 +557,28 @@ class AgentSession:
 
         await self.use_model(self.model, on_step=on_step)
 
-    async def use_model(self, model: str, on_step=None) -> None:
+    async def use_model(self, ref: str, on_step=None) -> None:
         """
         切换模型并重建智能体。
+
+        ref 是模型引用（`ollama:qwen2.5:3b` 或 `deepseek:deepseek-chat`）。
+        不带 provider 前缀时按 Ollama 处理，因此旧的纯模型名写法仍然可用。
 
         为什么必须重建：模型是**构造智能体时**绑定的，
         换模型只能重新 create_agent。对话历史保留，所以切换后
         「主题改成…」这类追问仍然接得住。
         """
-        problem = check_ollama(model)
+        problem = check_model(ref)
         if problem:
             raise RuntimeError(problem)
 
         from langchain.agents import create_agent
-        from langchain_ollama import ChatOllama
 
-        chat = ChatOllama(
-            base_url=settings.ollama_base_url, model=model, temperature=0.3
-        )
+        chat = build_chat_model(ref)
+        provider, name = parse_ref(ref)
 
-        # 把附件目录的真实内容写进提示词，避免模型凭空拼出不存在的路径
+        # 把附件目录的真实内容写进提示词，避免模型凭空拼出不存在的路径。
+        # 换模型时一并重建提示词：附件目录可能已经有变化了。
         attach_dir = Path(settings.attachment_dir)
         files = list_attachments(attach_dir)
         attach_list = (
@@ -432,9 +592,11 @@ class AgentSession:
                 attach_list=attach_list,
             )
         )
-        self.model = model
+        self.model = ref
+        self.provider = provider
+        self.model_name = name
         if on_step:
-            on_step("已切换到模型 %s" % model)
+            on_step("已切换到模型 %s" % name)
 
     # -- 对话 ---------------------------------------------------------------
 

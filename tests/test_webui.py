@@ -46,6 +46,48 @@ async def client(attachment_dir):
         yield c
 
 
+@pytest.fixture
+def fake_env(tmp_path, monkeypatch):
+    """
+    把应用的 .env 指到临时文件。
+
+    绝对不能让测试写到项目真实的 .env —— 那里面是用户的授权码，
+    一次写坏就得重新申请。这条与本文件里「不许污染真实附件目录」
+    是同一类要求。
+
+    配置接口会**就地改写** `settings`（这是刻意的：不做就地改，
+    已绑定 settings 的模块就看不到新值）。代价是它会影响后续用例，
+    所以这里按字段快照、逐个还原——覆盖所有 EDITABLE_KEYS 对应的字段，
+    漏一个就会出现「前一个用例的授权码漏到后一个用例」这种幽灵失败。
+    """
+    from envfile import EDITABLE_KEYS, EnvFile
+    from config import Settings, settings
+
+    path = tmp_path / ".env"
+    path.write_text(
+        "# 用户自己的注释，必须保留\n"
+        "SMTP_EMAIL=old@qq.com\n"
+        "SMTP_PASSWORD=0123456789abcdef\n"
+        "SMTP_SERVER=smtp.qq.com\n"
+        "SMTP_PORT=465\n"
+        "OLLAMA_MODEL=qwen2.5:3b\n",
+        encoding="utf-8",
+        newline="",
+    )
+
+    snapshot = {
+        key.lower(): getattr(settings, key.lower())
+        for key in EDITABLE_KEYS
+        if key.lower() in Settings.model_fields
+    }
+
+    monkeypatch.setattr(webui, "ENV_FILE", EnvFile(path))
+    yield EnvFile(path)
+
+    for field, value in snapshot.items():
+        setattr(settings, field, value)
+
+
 # ---------------------------------------------------------------------------
 # 基础端点
 # ---------------------------------------------------------------------------
@@ -106,14 +148,47 @@ async def test_info_does_not_dump_settings_object(client):
     assert keys <= allowed, "出现了未预期的字段：%s" % sorted(keys - allowed)
 
 
-async def test_models_lists_installed_and_current(client, monkeypatch):
+async def test_models_are_listed_with_availability(client, monkeypatch):
+    """
+    模型列表要带「能不能用」与原因。
+
+    只给一个名字不够：DeepSeek 需要 API Key，界面得能说明
+    「为什么这个选项不能选」，否则用户只会看到切换失败。
+    """
     import butler_core
 
     monkeypatch.setattr(butler_core, "list_ollama_models", lambda: ["a:1b", "b:2b"])
-    resp = await client.get("/api/models")
-    data = resp.json()
-    assert data["installed"] == ["a:1b", "b:2b"]
+    monkeypatch.setattr(butler_core, "deepseek_configured", lambda: False)
+
+    data = (await client.get("/api/models")).json()
+    by_ref = {m["ref"]: m for m in data["models"]}
+
+    assert "ollama:a:1b" in by_ref
+    assert by_ref["ollama:a:1b"]["available"] is True
+    assert by_ref["ollama:a:1b"]["provider"] == "ollama"
+
+    # 没配 Key 时 DeepSeek 选项要标成不可用并说明原因
+    deepseek = [m for m in data["models"] if m["provider"] == "deepseek"]
+    assert deepseek, "应始终列出 DeepSeek 选项，否则用户不知道有这个能力"
+    assert all(m["available"] is False for m in deepseek)
+    assert all("API Key" in m["reason"] for m in deepseek)
+
+
+async def test_models_marks_deepseek_available_when_configured(client, monkeypatch):
+    import butler_core
+
+    monkeypatch.setattr(butler_core, "list_ollama_models", lambda: [])
+    monkeypatch.setattr(butler_core, "deepseek_configured", lambda: True)
+
+    data = (await client.get("/api/models")).json()
+    deepseek = [m for m in data["models"] if m["provider"] == "deepseek"]
+    assert deepseek and all(m["available"] for m in deepseek)
+
+
+async def test_models_reports_current_selection(client):
+    data = (await client.get("/api/models")).json()
     assert data["current"], "必须告诉界面当前用的是哪个模型"
+    assert ":" in data["current"], "当前模型应是 provider:model 形式"
 
 
 # ---------------------------------------------------------------------------
@@ -472,3 +547,167 @@ async def test_switch_model_rejects_unknown_model(client, fake_session, monkeypa
 async def test_switch_model_requires_model_field(client, fake_session):
     resp = await client.post("/api/models", json={})
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# 配置编辑
+# ---------------------------------------------------------------------------
+
+async def test_get_config_masks_secrets(client, fake_env):
+    """
+    配置视图必须脱敏：授权码只回长度，不回内容。
+    """
+    data = (await client.get("/api/config")).json()
+    values = data["values"]
+
+    assert values["SMTP_EMAIL"]["value"] == "old@qq.com", "非敏感项要回显"
+    assert values["SMTP_PASSWORD"]["secret"] is True
+    assert values["SMTP_PASSWORD"]["length"] == len("0123456789abcdef")
+    assert values["SMTP_PASSWORD"]["value"] is None, "授权码绝不能回内容"
+
+    # 整个响应里都不该出现授权码
+    assert "0123456789abcdef" not in (await client.get("/api/config")).text
+
+
+async def test_get_config_lists_editable_keys(client, fake_env):
+    data = (await client.get("/api/config")).json()
+    assert "SMTP_EMAIL" in data["editable"]
+    assert "DEEPSEEK_API_KEY" in data["editable"]
+    assert "MCP_AUTH_TOKEN" not in data["editable"], "认证令牌不该能从这里改"
+
+
+async def test_put_config_saves_and_applies_immediately(client, fake_env):
+    """
+    保存后必须**立刻生效**，不是等重启。
+
+    这里验证的是关键路径：.env 文件被更新，且运行中的 settings
+    也跟着变了——否则界面显示已改、实际还在用旧值。
+
+    断言对象刻意用 `webui.settings` 而不是 `config.settings`：
+    `from config import settings` 把对象绑定到各模块自己的命名空间，
+    而个别用例会 reload config 模块。用 webui 自己那份，才是
+    「这段代码实际读的那一个」。
+    """
+    resp = await client.put("/api/config", json={
+        "values": {"SMTP_EMAIL": "new@qq.com", "OLLAMA_MODEL": "qwen2.5:7b"},
+    })
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "SMTP_EMAIL" in body["changed"]
+
+    assert fake_env.as_dict()["SMTP_EMAIL"] == "new@qq.com"
+    assert webui.settings.smtp_email == "new@qq.com", "必须就地应用到运行中的配置"
+    assert webui.settings.ollama_model == "qwen2.5:7b"
+
+
+async def test_put_config_preserves_comments(client, fake_env):
+    """改配置不能把用户在 .env 里写的注释抹掉。"""
+    await client.put("/api/config", json={"values": {"SMTP_EMAIL": "new@qq.com"}})
+    assert "用户自己的注释，必须保留" in fake_env.read_raw()
+
+
+async def test_put_config_blank_secret_means_keep(client, fake_env):
+    """
+    敏感项留空 = 不修改，而不是清空。
+
+    界面拿不到授权码内容，所以密码框永远是空的；若把空值当成清空，
+    用户每改一次别的字段就会把授权码抹掉，下次发信直接失败。
+    """
+    resp = await client.put("/api/config", json={
+        "values": {"SMTP_EMAIL": "new@qq.com", "SMTP_PASSWORD": ""},
+    })
+    assert resp.status_code == 200
+    assert fake_env.as_dict()["SMTP_PASSWORD"] == "0123456789abcdef", "授权码不该被清空"
+
+
+async def test_put_config_accepts_new_secret(client, fake_env):
+    resp = await client.put("/api/config", json={
+        "values": {"SMTP_PASSWORD": "fedcba9876543210"},
+    })
+    assert resp.status_code == 200
+    assert fake_env.as_dict()["SMTP_PASSWORD"] == "fedcba9876543210"
+    assert webui.settings.smtp_password == "fedcba9876543210"
+
+
+async def test_put_config_rejects_wrong_length_authorization_code(client, fake_env):
+    """
+    授权码固定 16 位。填成 QQ 密码是最常见的错误，必须当场拦住。
+
+    否则错误会推迟到发信时才以 SMTP 认证失败的形式出现，
+    而那条英文报错对用户毫无帮助。
+    """
+    resp = await client.put("/api/config", json={
+        "values": {"SMTP_PASSWORD": "我的QQ密码不是授权码"},
+    })
+    assert resp.status_code == 400
+    assert "16" in resp.json()["detail"]
+    assert fake_env.as_dict()["SMTP_PASSWORD"] == "0123456789abcdef", "校验失败不该写入"
+
+
+async def test_put_config_rejects_empty_email(client, fake_env):
+    resp = await client.put("/api/config", json={"values": {"SMTP_EMAIL": ""}})
+    assert resp.status_code == 400
+    assert "不能为空" in resp.json()["detail"]
+
+
+async def test_put_config_rejects_malformed_email(client, fake_env):
+    resp = await client.put("/api/config", json={"values": {"SMTP_EMAIL": "不是邮箱"}})
+    assert resp.status_code == 400
+
+
+async def test_put_config_rejects_non_numeric_port(client, fake_env):
+    resp = await client.put("/api/config", json={"values": {"SMTP_PORT": "abc"}})
+    assert resp.status_code == 400
+
+
+async def test_put_config_ignores_unknown_keys(client, fake_env):
+    """未知键直接忽略，不报错也不写入（界面可能带多余字段）。"""
+    resp = await client.put("/api/config", json={
+        "values": {"SMTP_EMAIL": "new@qq.com", "完全不存在的键": "x"},
+    })
+    assert resp.status_code == 200
+    assert "完全不存在的键" not in fake_env.read_raw()
+
+
+async def test_put_config_creates_backup(client, fake_env):
+    resp = await client.put("/api/config", json={"values": {"SMTP_EMAIL": "new@qq.com"}})
+    assert resp.json()["backup"], "改配置前要留一份备份"
+
+
+async def test_put_config_no_change_reports_clearly(client, fake_env):
+    resp = await client.put("/api/config", json={"values": {"SMTP_EMAIL": "old@qq.com"}})
+    assert resp.status_code == 200
+    assert resp.json()["changed"] == []
+    assert resp.json()["message"], "应说明「没有需要保存的改动」"
+
+
+async def test_put_config_never_writes_real_env(client, fake_env):
+    """
+    回归测试：配置接口绝不能碰到项目真实的 .env。
+
+    那里面是用户的授权码，写坏一次就得重新申请。
+    """
+    import config as config_module
+
+    real = Path(config_module.__file__).resolve().parent / ".env"
+    before = real.read_bytes() if real.is_file() else None
+
+    await client.put("/api/config", json={"values": {"SMTP_EMAIL": "new@qq.com"}})
+
+    after = real.read_bytes() if real.is_file() else None
+    assert after == before, "测试改动了项目真实的 .env"
+
+
+async def test_config_test_endpoint_does_not_accept_credentials(client, fake_env):
+    """
+    连接测试接口不接受调用方传来的凭据。
+
+    否则它就变成一个「拿任意凭据去连外部服务器」的接口。
+    """
+    resp = await client.post("/api/config/test", json={
+        "smtp_email": "attacker@evil.com", "smtp_password": "x" * 16,
+    })
+    assert resp.status_code in (200, 400, 500)
+    # 不管结果如何，都不该因为「传了凭据」而改变行为；
+    # 这里只断言它没有把这些凭据写进配置
+    assert fake_env.as_dict()["SMTP_EMAIL"] == "old@qq.com"

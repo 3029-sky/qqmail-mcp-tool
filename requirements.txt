@@ -15,10 +15,15 @@ python-multipart>=0.0.6
 # 只在 Windows 上安装；其他平台上 /粘贴 会提示不可用，不影响发信。
 pywin32>=306; sys_platform == "win32"
 
-# 邮件管家与智能体（email_butler.py）
+# 邮件管家与智能体（email_butler.py / webui.py）
 # langchain-ollama 提供实现 bind_tools 的 ChatOllama；
 # langchain-community 里的同名类没有实现该方法，会导致 create_agent 报 NotImplementedError。
 langchain>=1.0.0
 langchain-core>=1.0.0
 langchain-ollama>=1.0.0
 langchain-mcp-adapters>=0.1.0
+
+# 可选：使用 DeepSeek 云端模型时需要（本地 Ollama 模型不需要）。
+# 装上之后在应用「设置」里填入 DEEPSEEK_API_KEY 即可选用。
+# 不装也能跑，只是 DeepSeek 选项会提示需要安装。
+langchain-openai>=1.0.0
