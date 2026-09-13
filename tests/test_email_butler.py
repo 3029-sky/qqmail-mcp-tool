@@ -601,3 +601,160 @@ async def test_ask_records_user_message_in_history():
     await b.ask("记住这句话")
     first = " ".join(str(getattr(m, "content", m)) for m in b.history)
     assert "记住这句话" in first
+
+
+# ---------------------------------------------------------------------------
+# 输出编码加固
+# ---------------------------------------------------------------------------
+
+def test_output_resilient_sets_errors_replace():
+    """
+    回归测试：stdout/stderr 必须把编码错误降级，而不是抛异常。
+
+    Windows 上 stdout 编码取系统 ANSI 代码页（中文系统是 GBK），
+    而启动横幅里有 emoji（📬）。GBK 编不出它，`print(BANNER)` 直接抛
+    UnicodeEncodeError —— 管家连界面都没出来就退出了。
+    实测触发条件：设置 PYTHONIOENCODING=gbk，或把输出重定向/管道出去。
+    """
+    import io
+    import sys
+
+    import email_butler  # noqa: F401 - 导入时即执行加固
+
+    for stream in (sys.stdout, sys.stderr):
+        # TextIOWrapper 暴露 errors 属性，值为 'replace' 即加固生效
+        assert getattr(stream, "errors", None) == "replace"
+
+
+def test_banner_survives_gbk_encoding():
+    """
+    横幅必须能在 GBK 下打印出来（emoji 降级成 '?'，不抛异常）。
+
+    直接断言「用 gbk 编码横幅不抛异常」，把真实失败模式固化下来。
+    """
+    from email_butler import BANNER
+
+    encoded = BANNER.encode("gbk", errors="replace")   # 不应抛异常
+    assert b"?" in encoded, "emoji 应被降级成 ?"
+    assert "邮件管家".encode("gbk") in encoded, "中文必须完整保留"
+
+
+# ---------------------------------------------------------------------------
+# /粘贴 指令
+# ---------------------------------------------------------------------------
+
+def test_banner_documents_paste_command():
+    """
+    启动横幅必须提到 /粘贴。
+
+    否则用户根本不知道有这个功能——它是本项目的入口级能力，
+    藏起来等于没有。
+    """
+    from email_butler import BANNER
+
+    assert "/粘贴" in BANNER
+    assert "复制" in BANNER
+
+
+def test_paste_handler_reports_unavailable_without_pywin32(monkeypatch, capsys):
+    """没有 pywin32 时给明确提示，不抛异常。"""
+    import clipboard
+    import email_butler
+
+    monkeypatch.setattr(email_butler, "clipboard_supported", lambda: False)
+
+    email_butler.handle_clipboard_paste()
+
+    out = capsys.readouterr().out
+    assert "剪贴板不可用" in out
+
+
+def test_paste_handler_prints_imported_names(monkeypatch, capsys, tmp_path):
+    """
+    导入成功后要把**落地后的文件名**打印出来。
+
+    这是整个功能的关键：用户看到文件名才能接着说「把它发给我自己」，
+    否则模型只会收到一个模糊的「这个」。
+    """
+    import clipboard
+    import email_butler
+
+    target = tmp_path / "项目资料.zip"
+    target.write_bytes(b"x" * 512)
+
+    monkeypatch.setattr(email_butler, "clipboard_supported", lambda: True)
+    monkeypatch.setattr(email_butler, "clipboard_summary", lambda: "1 个文件：项目资料.zip")
+    monkeypatch.setattr(
+        email_butler, "import_clipboard",
+        lambda d, max_bytes=0: (
+            [clipboard.ClipboardItem("项目资料.zip", str(target), 512, "file", True)],
+            [],
+        ),
+    )
+
+    email_butler.handle_clipboard_paste()
+
+    out = capsys.readouterr().out
+    assert "项目资料.zip" in out
+    assert "已放入附件目录" in out
+
+
+def test_paste_handler_reports_problems(monkeypatch, capsys, tmp_path):
+    """导入失败时把原因打出来，而不是静默什么也不做。"""
+    import email_butler
+
+    monkeypatch.setattr(email_butler, "clipboard_supported", lambda: True)
+    monkeypatch.setattr(email_butler, "clipboard_summary", lambda: "空")
+    monkeypatch.setattr(
+        email_butler, "import_clipboard",
+        lambda d, max_bytes=0: ([], ["跳过（过大）：巨大.zip 约 20.0 MB"]),
+    )
+
+    email_butler.handle_clipboard_paste()
+
+    out = capsys.readouterr().out
+    assert "过大" in out
+    assert "巨大.zip" in out
+
+
+def test_paste_handler_handles_empty_clipboard(monkeypatch, capsys):
+    """剪贴板空时给出该怎么做的提示，而不是只说「失败」。"""
+    import email_butler
+
+    monkeypatch.setattr(email_butler, "clipboard_supported", lambda: True)
+    monkeypatch.setattr(email_butler, "clipboard_summary", lambda: "空")
+    monkeypatch.setattr(
+        email_butler, "import_clipboard",
+        lambda d, max_bytes=0: ([], ["剪贴板里没有文件或图片"]),
+    )
+
+    email_butler.handle_clipboard_paste()
+
+    out = capsys.readouterr().out
+    assert "复制" in out or "截图" in out, "应告诉用户下一步怎么做"
+
+
+def test_paste_uses_configured_size_limit(monkeypatch, tmp_path):
+    """
+    /粘贴 必须复用配置里的单件上限，不能自己另立一套。
+
+    否则会出现「导入时说可以，发送时被拒」的矛盾。
+    """
+    import email_butler
+    from config import settings
+
+    seen = {}
+
+    def fake_import(directory, max_bytes=0):
+        seen["dir"] = directory
+        seen["max_bytes"] = max_bytes
+        return [], []
+
+    monkeypatch.setattr(email_butler, "clipboard_supported", lambda: True)
+    monkeypatch.setattr(email_butler, "clipboard_summary", lambda: "空")
+    monkeypatch.setattr(email_butler, "import_clipboard", fake_import)
+
+    email_butler.handle_clipboard_paste()
+
+    assert seen["max_bytes"] == settings.max_attachment_bytes
+    assert seen["dir"] == settings.attachment_dir

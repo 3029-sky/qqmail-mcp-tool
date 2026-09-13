@@ -42,9 +42,38 @@ from typing import Any, List, Optional
 
 import httpx
 
+from clipboard import clipboard_summary, import_clipboard, is_supported as clipboard_supported
 from config import settings
 
 ROOT = Path(__file__).resolve().parent
+
+
+def _make_output_resilient() -> None:
+    """
+    让输出遇到无法编码的字符时降级，而不是让整个程序崩掉。
+
+    为什么需要：Windows 上 Python 的 stdout 编码取的是系统 ANSI 代码页
+    （中文系统是 GBK），而本文件用了 emoji（📬 ⚙ ↩ ⏱）。
+    GBK 编不出这些字符，`print` 会抛 UnicodeEncodeError —— 而且是
+    在**打印启动横幅时**就抛，管家连界面都没出来就退出了。
+
+    触发条件比想象中常见：把输出重定向到文件、管道给别的程序，
+    或设置 PYTHONIOENCODING=gbk，都会走到这条路（实测过）。
+
+    `reconfigure(errors="replace")` 保留原有编码（中文照常显示），
+    只把编不出的字符换成 '?'，因此不会影响正常使用。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(errors="replace")
+        except Exception:  # noqa: BLE001 - 拿不到就维持原样，不该阻断启动
+            pass
+
+
+_make_output_resilient()
 
 MCP_HOST = "127.0.0.1"
 MCP_PORT = 8000
@@ -403,8 +432,49 @@ BANNER = """
   给 zhangsan@example.com 发一封会议提醒
   主题改成明天下午三点
 
+要发图片或压缩包？先复制它们，再输入 /粘贴：
+  截图后在对话里复制图片        -> /粘贴
+  在资源管理器里复制文件/压缩包  -> /粘贴
+然后说「把它发给我自己」即可。
+
 输入 exit / quit / 退出 结束
 """
+
+
+def handle_clipboard_paste() -> None:
+    """
+    处理 /粘贴：把剪贴板内容落地成附件，并打印结果。
+
+    刻意不做成自动检测：自动导入意味着「你没打算发的东西也可能被带走」，
+    而这个工具是真能往外发邮件的。让用户明确说一句，代价很小。
+    """
+    if not clipboard_supported():
+        print("  剪贴板不可用（需要 Windows + pywin32）。\n")
+        return
+
+    print("  剪贴板里是：%s" % clipboard_summary())
+
+    items, problems = import_clipboard(
+        settings.attachment_dir,
+        max_bytes=settings.max_attachment_bytes,
+    )
+
+    for problem in problems:
+        print("  ⚠  %s" % problem)
+
+    if not items:
+        if not problems:
+            print("  没有可导入的内容。")
+        print("  提示：先在资源管理器里复制文件，或截图后复制图片，再输入 /粘贴。\n")
+        return
+
+    print("  ✅ 已放入附件目录：")
+    for item in items:
+        action = "已复制进来" if item.copied else "本来就在附件目录"
+        print("     %s（%.1f KB，%s）" % (item.name, item.size / 1024, action))
+    print()
+    print("  现在可以说：「把 %s 发给我自己」" % items[0].name)
+    print()
 
 
 async def chat(butler: EmailButler) -> None:
@@ -422,6 +492,13 @@ async def chat(butler: EmailButler) -> None:
             print("再见。")
             return
         if not text:
+            continue
+
+        # /粘贴、/paste：把剪贴板里的图片或文件导入附件目录。
+        # 这是本地操作，不经过模型，因此不消耗推理时间也不会被误解。
+        if text.lower() in ("/粘贴", "/paste", "/p"):
+            print()
+            handle_clipboard_paste()
             continue
 
         print()

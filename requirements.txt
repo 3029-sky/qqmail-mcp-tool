@@ -10,6 +10,11 @@ python-dotenv>=1.0.0
 rich>=13.0.0
 python-multipart>=0.0.6
 
+# 剪贴板读取（clipboard.py 的 /粘贴 指令）。
+# 它本来是 mcp 的间接依赖，但我们是直接 import 的，所以显式声明。
+# 只在 Windows 上安装；其他平台上 /粘贴 会提示不可用，不影响发信。
+pywin32>=306; sys_platform == "win32"
+
 # 邮件管家与智能体（email_butler.py）
 # langchain-ollama 提供实现 bind_tools 的 ChatOllama；
 # langchain-community 里的同名类没有实现该方法，会导致 create_agent 报 NotImplementedError。

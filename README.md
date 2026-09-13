@@ -48,12 +48,13 @@
 | 特性 | 说明 |
 |---|---|
 | **对话式发信** | `email_butler.py` 单入口启动，用中文说"给我自己发封邮件，说早上好"即可；带多轮记忆，能接住"主题改成…"这类追问 |
+| **剪贴板直发图片/文件** | 复制图片或压缩包后输入 `/粘贴`，自动落地成附件。终端本身粘不出图片，也粘不出文件路径，因此直接读剪贴板 |
 | **标准 MCP 协议** | 使用官方 Streamable HTTP 传输层，支持完整的 `initialize` 握手与会话管理，任意合规 MCP 客户端均可接入 |
 | **4 个邮件工具** | 纯文本 / HTML / 附件邮件，以及配置检查 |
 | **SMTP 连接复用** | 专用工作线程独占连接，实测 5 封邮件仅建立 1 条 TLS 连接 |
 | **结构化日志** | 可选单行 JSON 输出，便于日志系统采集 |
 | **发送指标** | 成功率、延迟分位数、失败原因分布，经 `/metrics` 暴露 |
-| **零外部依赖的测试** | 替换 SMTP/IMAP 层与注入替身，253 个用例不联网、不碰真实邮箱、约 3.5 秒跑完 |
+| **零外部依赖的测试** | 替换 SMTP/IMAP 层与注入替身，290 个用例不联网、不碰真实邮箱、约 3.5 秒跑完 |
 
 ---
 
@@ -147,7 +148,7 @@ copy .env.example .env          # Windows
 >
 > ```bash
 > copy .env.test .env      # 只有假数据，测试全程不发起真实请求
-> python -m pytest -q      # 应看到 253 passed
+> python -m pytest -q      # 应看到 290 passed
 > ```
 >
 > `SMTP_EMAIL` 与 `SMTP_PASSWORD` 是**必填**项，两者都缺失时测试会在
@@ -345,7 +346,35 @@ python email_butler.py
   ↩  ✅ 邮件发送成功
 
 小邮 ▸ 已经把邮件主题改成"明天下午三点的会议提醒"，并发送成功了。
+
+你 ▸ /paste                       # 复制图片或文件后用它导入
+  剪贴板里是：图片 1920×1080
+  ✅ 已放入附件目录：
+     剪贴板图片_20260913_211530.png（412.3 KB，已复制进来）
+
+  现在可以说：「把 剪贴板图片_20260913_211530.png 发给我自己」
+
+你 ▸ 把它发给我自己
+  ⚙  发送带附件的邮件
+       收件人: you@qq.com
+       主题: 剪贴板图片_20260913_211530
+       附件: 剪贴板图片_20260913_211530.png
+  ↩  ✅ 邮件发送成功
 ```
+
+`/粘贴`（或 `/paste`、`/p`）把剪贴板内容落地成附件：
+
+| 你先做 | 它会 |
+|---|---|
+| 截图后复制图片，或右键复制网页图片 | 存成 `attachments\剪贴板图片_<时间>.png` |
+| 在资源管理器里选中文件/压缩包 Ctrl+C | 复制进 `attachments\`，文件名不变 |
+
+**为什么需要这条指令**：终端只处理文本。实测在资源管理器里复制文件后，
+剪贴板里**只有文件格式（`CF_HDROP`）、没有文本格式**，所以 Ctrl+V
+什么也粘不出来；图片更是完全粘不出来。因此只能由代码直接读剪贴板。
+
+**为什么做成显式指令而不是自动检测**：自动导入意味着「你没打算发的
+东西也可能被带走」，而这个工具是真能往外发邮件的。
 
 相比早期版本，它解决了三件实际影响体验的事：
 
@@ -394,7 +423,7 @@ python -m pytest -q         # 精简输出
 python -m pytest tests/test_email_tools.py -v
 ```
 
-套件共 253 个用例，**全程不发起真实网络请求**：
+套件共 290 个用例，**全程不发起真实网络请求**：
 
 | 文件 | 关注点 |
 |---|---|
@@ -403,7 +432,8 @@ python -m pytest tests/test_email_tools.py -v
 | `tests/test_delivery.py` | **发送确认**：主题 MIME 解码匹配、收件人校验、重试轮询、失败降级 |
 | `tests/test_retry.py` | **重试分类**：4xx 可重试 / 5xx 不可重试、退避上限、次数耗尽的传播 |
 | `tests/test_idempotency.py` | **幂等键**：重复请求不再发送、TTL 过期、卡死占用回收 |
-| `tests/test_email_butler.py` | **管家**：多轮记忆、只显示本轮动作、Ollama 检查、附件列举、提示词约束 |
+| `tests/test_email_butler.py` | **管家**：多轮记忆、只显示本轮动作、Ollama 检查、附件列举、提示词约束、`/粘贴` 指令、GBK 下的输出加固 |
+| `tests/test_clipboard.py` | **剪贴板导入**：位图逐像素解析（行对齐、自下而上、BGRA→RGB）、文件复制、超限跳过、PNG 落地 |
 | `tests/test_email_tools.py` | MIME 结构、UTF-8 编码、附件、连接复用、指标、错误处理 |
 | `tests/test_mcp_server.py` | REST 端点 + **真实 MCP 协议握手与工具调用** |
 | `tests/test_tool_defs.py` | 工具注册表一致性、参数校验、分发、超时 |
@@ -747,6 +777,7 @@ qqmail-mcp-tool/
 ├── retry.py                 # 重试策略与错误分类
 ├── idempotency.py           # 幂等键（防止重复发信）
 ├── email_butler.py          # 邮件管家（推荐入口：自动起服务器 + 多轮记忆）
+├── clipboard.py             # 剪贴板导入（/粘贴 指令：图片与文件）
 ├── 启动管家.bat              # 双击启动管家（仅含 ASCII，中文提示由 Python 输出）
 ├── create_attachments.py    # 生成示例附件（报表/纪要/配置）
 ├── requirements.txt         # 运行时依赖
@@ -758,7 +789,7 @@ qqmail-mcp-tool/
 ├── .env.example             # 配置模板（可提交）
 ├── .env.test                # CI 用占位配置
 ├── .github/workflows/tests.yml
-├── tests/                   # 253 个用例
+├── tests/                   # 290 个用例
 │   ├── conftest.py
 │   ├── test_config.py
 │   ├── test_auth.py
@@ -766,10 +797,11 @@ qqmail-mcp-tool/
 │   ├── test_retry.py
 │   ├── test_idempotency.py
 │   ├── test_email_butler.py
+│   ├── test_clipboard.py
 │   ├── test_email_tools.py
 │   ├── test_mcp_server.py
 │   └── test_tool_defs.py
-└── attachments/             # 附件目录（示例附件由 create_attachments.py 生成）
+└── attachments/             # 附件目录（示例附件由 create_attachments.py 生成，/粘贴 也放这里）
 ```
 
 ---
