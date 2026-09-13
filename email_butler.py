@@ -7,14 +7,21 @@
     > 主题改成明天开会的时间
     > 算了，还是发给张三吧
 
-与前身 langchain_client.py 的区别：
+本程序是项目推荐的日常入口。相比一个「一问一答」的简单客户端，它解决了
+四件实际影响体验的事：
+
   1. **单入口**：本程序自己管理 MCP 服务器子进程，
      不需要你先开一个窗口跑 run_server.py。
+     若端口上已有服务器在跑，会复用而不是重复启动。
   2. **多轮记忆**：每轮把完整对话历史交给智能体。
-     之前每轮只传当前一句，导致「主题改成XXX」这类追问完全接不住。
-  3. **动作可见**：会把调用了哪个工具、返回了什么打出来，
-     而不是只给一句结论。
+     若每轮只传当前一句，「主题改成XXX」这类追问完全接不住——
+     它不知道你在说哪封邮件（这一点是实测出来的，不是推测）。
+  3. **动作可见**：会把调用了哪个工具、参数是什么、返回什么打出来，
+     而不是只给一句结论，便于判断它是真发了还是在敷衍。
   4. **缺依赖时讲人话**：Ollama 没起、模型没拉，会给出可直接照抄的命令。
+
+另一个客户端 ollama_mcp_client.py 的定位不同：它演示**手写 MCP 协议交互**
+（自己拼 JSON-RPC、自己解析模型输出），用于理解协议本身，不是日常工具。
 
 前置条件：
   - Ollama 已启动，且已拉取模型（默认 qwen2.5:3b）
@@ -289,6 +296,9 @@ class EmailButler:
     # -- 启动 ---------------------------------------------------------------
 
     async def setup(self) -> None:
+        # 注意：必须用 langchain_ollama 的 ChatOllama。
+        # langchain_community 里有一个同名类，但它没有实现 bind_tools，
+        # 会让 create_agent 抛 NotImplementedError（实测踩过）。
         from langchain.agents import create_agent
         from langchain_mcp_adapters.client import MultiServerMCPClient
         from langchain_ollama import ChatOllama

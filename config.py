@@ -76,13 +76,23 @@ class Settings(BaseSettings):
     idempotency_inflight_timeout: float = 300.0
 
     # 附件大小限制
-    #: 单个附件的上限（字节）。
-    #: QQ 邮箱单封邮件上限约 25MB；这里留出余量，且 Base64 编码后体积会膨胀约 1.37 倍。
-    #: 超限在发送前就拒绝，而不是等 SMTP 回一个难懂的英文错误。
-    max_attachment_bytes: int = 12 * 1024 * 1024
+    #
+    # 判断口径是「编码后的体积」，而不是原始文件大小——
+    # 因为 QQ 邮箱限制的是传输中的字节数，而 Base64 编码会让体积膨胀约 1/3。
+    # 早期版本按原始大小比较（原始 16MB 实际传输约 21.9MB），余量已经偏薄。
+    #
+    #: Base64 编码带来的体积膨胀倍数（4/3）。
+    #: 每 3 字节原文编码成 4 字节，因此实际传输量约为原始的 1.34 倍。
+    attachment_encoding_ratio: float = 4 / 3
 
-    #: 全部附件合计的上限（字节）。
-    max_total_attachment_bytes: int = 16 * 1024 * 1024
+    #: 单封邮件内所有附件的**原始**字节上限。
+    #: 20MB × 1.34 ≈ 26.8MB —— 与 QQ 的约 25MB 上限相当，因此 20MB 已是上限值；
+    #: 默认取 18MB（编码后约 24.1MB），留出邮件头与正文的空间。
+    max_total_attachment_bytes: int = 18 * 1024 * 1024
+
+    #: 单个附件的原始字节上限。多数场景是「选错了文件」，设得比合计更严一些。
+    #: 默认 10MB（编码后约 13.4MB）。
+    max_attachment_bytes: int = 10 * 1024 * 1024
 
     # 附件存储路径
     attachment_dir: Path = Path(__file__).parent / "attachments"

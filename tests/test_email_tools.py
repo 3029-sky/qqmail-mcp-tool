@@ -423,6 +423,78 @@ def test_format_size_units():
 
 
 # ---------------------------------------------------------------------------
+# 附件大小：判断口径是「编码后体积」
+# ---------------------------------------------------------------------------
+
+def test_oversize_reports_encoded_size(tiny_limits, tmp_path):
+    """
+    超限项要同时给出原始大小与编码后估算。
+
+    只给原始大小，用户会觉得「我才 10MB 为什么说超了」；
+    只给编码后大小，又对不上自己文件属性面板里的数字。
+    """
+    from email_tools import check_attachment_sizes
+
+    f = tmp_path / "big.bin"
+    f.write_bytes(b"x" * 100)  # per_limit=64, ratio=4/3
+    items = check_attachment_sizes([str(f)])
+
+    single = [o for o in items if o["kind"] == "single"][0]
+    assert single["size"] == 100
+    assert single["encoded_size"] == int(100 * 4 / 3), "应给出编码后估算"
+    assert single["encoded_text"] != single["size_text"]
+
+
+def test_encoded_ratio_comes_from_config(tiny_limits, tmp_path, monkeypatch):
+    """
+    编码系数可配置，且被真正使用。
+
+    固化「按编码后体积判断」这件事本身：把系数调大，原本合格的文件
+    应当被判为超限——若实现里写死了大小比较，这条会失败。
+    """
+    import email_tools
+    from email_tools import check_attachment_sizes
+
+    f = tmp_path / "mid.bin"
+    f.write_bytes(b"x" * 50)   # 50 < 64，默认合格
+    assert [o for o in check_attachment_sizes([str(f)]) if o["kind"] == "single"] == []
+
+    # 把合计上限压到 50 以下，让"编码后"成为决定性因素
+    monkeypatch.setattr(email_tools.settings, "max_total_attachment_bytes", 40)
+    oversized = check_attachment_sizes([str(f)])
+    assert any(o["kind"] == "total" for o in oversized), (
+        "应依据配置的阈值判断，而不是写死的数字"
+    )
+
+
+def test_describe_oversize_explains_encoding(tiny_limits, tmp_path):
+    """提示里要解释「为什么按编码后算」，否则用户会觉得数字对不上。"""
+    from email_tools import check_attachment_sizes, describe_oversize
+
+    f = tmp_path / "报表.xlsx"
+    f.write_bytes(b"x" * 200)
+    text = describe_oversize(check_attachment_sizes([str(f)]))
+
+    assert "报表.xlsx" in text
+    assert "编码后" in text
+    assert "1/3" in text, "应说明膨胀比例"
+    assert "200" in text, "应给出精确字节数"
+
+
+def test_total_oversize_message_includes_encoded(tiny_limits, tmp_path):
+    from email_tools import check_attachment_sizes, describe_oversize
+
+    paths = []
+    for i in range(3):
+        p = tmp_path / ("p%d.bin" % i)
+        p.write_bytes(b"y" * 40)
+        paths.append(str(p))
+    text = describe_oversize(check_attachment_sizes(paths))
+    assert "合计" in text
+    assert "编码后" in text
+
+
+# ---------------------------------------------------------------------------
 # QQ 邮箱非标准响应
 # ---------------------------------------------------------------------------
 

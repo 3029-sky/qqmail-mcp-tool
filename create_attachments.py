@@ -27,7 +27,7 @@ teacher_config = {
         "├── config.py",
         "├── email_tools.py",
         "├── mcp_server.py",
-        "├── ollama_mcp_client.py",
+        "├── email_butler.py",
         "├── attachments/",
         "└── requirements.txt"
     ],

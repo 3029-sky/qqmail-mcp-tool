@@ -267,14 +267,15 @@ def check_attachment_sizes(paths: List[str]) -> List[Dict[str, Any]]:
       - 合计超限则是「每件都不大，但加起来太多」
     分开说明更利于用户判断该怎么处理。
 
-    QQ 邮箱单封上限约 25MB，但 Base64 编码会让体积膨胀约 1.37 倍，
-    因此配置里的阈值刻意留了余量。
+    判断口径是**编码后**的体积，不是原始文件大小——QQ 限制的是传输中的
+    字节数，而 Base64 会让体积膨胀约 1/3。按原始大小比较会低估实际占用。
     """
+    ratio = settings.attachment_encoding_ratio
     per_limit = settings.max_attachment_bytes
     total_limit = settings.max_total_attachment_bytes
 
     oversize: List[Dict[str, Any]] = []
-    sizes: List[tuple] = []
+    total_raw = 0
 
     for raw in paths or []:
         path = Path(raw)
@@ -282,25 +283,29 @@ def check_attachment_sizes(paths: List[str]) -> List[Dict[str, Any]]:
             size = path.stat().st_size
         except OSError:
             continue  # 读不到大小就交给上层的「文件不存在」逻辑处理
-        sizes.append((str(path), size))
+        total_raw += size
+
         if size > per_limit:
             oversize.append({
                 "path": str(path),
                 "name": path.name,
                 "size": size,
                 "size_text": _format_size(size),
+                "encoded_size": int(size * ratio),
+                "encoded_text": _format_size(size * ratio),
                 "limit": per_limit,
                 "limit_text": _format_size(per_limit),
                 "kind": "single",
             })
 
-    total = sum(s for _, s in sizes)
-    if total > total_limit:
+    if total_raw > total_limit:
         oversize.append({
             "path": "",
             "name": "（合计）",
-            "size": total,
-            "size_text": _format_size(total),
+            "size": total_raw,
+            "size_text": _format_size(total_raw),
+            "encoded_size": int(total_raw * ratio),
+            "encoded_text": _format_size(total_raw * ratio),
             "limit": total_limit,
             "limit_text": _format_size(total_limit),
             "kind": "total",
@@ -313,9 +318,11 @@ def describe_oversize(oversize: List[Dict[str, Any]]) -> str:
     """
     把超限项整理成可直接展示给用户的说明。
 
-    对超出单件上限的文件额外标出精确字节数：
-    格式化后可能显示成「12.0 MB（上限 12.0 MB）」而看不出到底超了多少，
-    带上字节数才能一眼判断差多少。
+    同时给出原始大小与编码后估算：
+      - 只给原始大小，用户会觉得「我才 10MB，为什么说超了」
+      - 只给编码后大小，用户对不上自己文件的属性面板
+    两个都给，才解释得清。
+    另外附上精确字节数——格式化后可能显示成「10.0 MB（上限 10.0 MB）」而看不出差多少。
     """
     single = [o for o in oversize if o["kind"] == "single"]
     total = [o for o in oversize if o["kind"] == "total"]
@@ -325,14 +332,18 @@ def describe_oversize(oversize: List[Dict[str, Any]]) -> str:
         lines.append("以下附件过大，超出单件上限 %s：" % single[0]["limit_text"])
         for o in single:
             lines.append(
-                "  · %s（%s，即 %s 字节）" % (o["name"], o["size_text"], o["size"])
+                "  · %s：%s（编码后约 %s，即 %s 字节）"
+                % (o["name"], o["size_text"], o["encoded_text"], o["size"])
             )
     if total:
         o = total[0]
         lines.append(
-            "全部附件合计 %s，超出上限 %s。"
-            % (o["size_text"], o["limit_text"])
+            "全部附件合计 %s（编码后约 %s），超出上限 %s。"
+            % (o["size_text"], o["encoded_text"], o["limit_text"])
         )
+    lines.append(
+        "说明：邮件附件经 Base64 编码后体积约增加 1/3，因此按编码后计算。"
+    )
     lines.append("建议：压缩后重发、拆成多封邮件，或改用网盘链接。")
     return "\n".join(lines)
 

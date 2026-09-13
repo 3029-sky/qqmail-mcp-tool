@@ -4,8 +4,8 @@
 规范的服务，让 AI 智能体能够通过标准协议代你发送邮件。
 
 服务基于 FastAPI + 官方 MCP Python SDK 的 **Streamable HTTP** 传输层实现，
-对外暴露 5 个邮件工具；仓库内附带两个可运行的智能体客户端示例
-（原生 MCP 客户端 与 LangChain/LangGraph 智能体）。
+对外暴露 5 个邮件工具；仓库内附带一个开箱即用的**邮件管家**客户端
+（`email_butler.py`：单入口启动、多轮对话记忆、动作可见）。
 
 ---
 
@@ -47,8 +47,8 @@
 ```
                         ┌─────────────────────────────────────────┐
                         │              MCP 客户端                 │
-                        │  langchain_client.py （LangGraph 智能体）│
-                        │  ollama_mcp_client.py （原生 MCP 客户端）│
+                        │  email_butler.py （邮件管家，日常入口）  │
+                        │  ollama_mcp_client.py （手写协议示例）   │
                         └────────────────────┬────────────────────┘
                                              │  MCP over HTTP (JSON-RPC)
                                              │  POST /mcp
@@ -148,14 +148,12 @@ python email_butler.py
 
 也可以双击根目录的 `启动管家.bat`。
 
-另外两个客户端需要你自己先启动服务器，用途见[使用方式](#使用方式)：
+另一个客户端 `ollama_mcp_client.py` 需要你自己先启动服务器，
+它是**手写协议交互的示例**，不是日常工具（用途见[使用方式](#使用方式)）：
 
 ```bash
-python langchain_client.py tools   # 只列出工具，不构建智能体
-python langchain_client.py demo    # 让智能体自动执行一个任务
-python langchain_client.py         # 交互模式
-
-python ollama_mcp_client.py        # 原生 MCP 客户端（交互模式）
+python ollama_mcp_client.py        # 交互模式
+python ollama_mcp_client.py test   # 直接跑一个固定测试
 ```
 
 ---
@@ -179,8 +177,8 @@ python ollama_mcp_client.py        # 原生 MCP 客户端（交互模式）
 | `JSON_LOGS` | | 未设置 | 设为 `1`/`true`/`yes` 时日志输出为单行 JSON |
 | `EMAIL_CONFIRM_DELIVERY` | | `false` | 是否用 IMAP 回读确认发送（见[发送确认](#发送确认imap-回读)） |
 | `SEND_MAX_ATTEMPTS` | | `3` | 发送总尝试次数（含首次）；`1` 表示不重试 |
-| `MAX_ATTACHMENT_BYTES` | | `12 MB` | 单个附件上限（见[附件行为](#附件行为两条容易踩的规则)） |
-| `MAX_TOTAL_ATTACHMENT_BYTES` | | `16 MB` | 全部附件合计上限 |
+| `MAX_ATTACHMENT_BYTES` | | `10 MB` | 单个附件上限（原始大小，见[附件行为](#附件行为两条容易踩的规则)） |
+| `MAX_TOTAL_ATTACHMENT_BYTES` | | `18 MB` | 全部附件合计上限（原始大小，编码后约 24MB） |
 
 `SMTP_EMAIL` 与 `SMTP_PASSWORD` **没有默认值**：缺失时进程启动即报
 `ValidationError`，不会静默回退到某个内置凭据。这条约束由测试固化
@@ -244,11 +242,17 @@ python ollama_mcp_client.py        # 原生 MCP 客户端（交互模式）
 
 | 配置 | 默认 | 说明 |
 |---|---|---|
-| `MAX_ATTACHMENT_BYTES` | `12 MB` | 单个附件上限 |
-| `MAX_TOTAL_ATTACHMENT_BYTES` | `16 MB` | 全部附件合计上限 |
+| `MAX_ATTACHMENT_BYTES` | `10 MB` | 单个附件上限（原始大小） |
+| `MAX_TOTAL_ATTACHMENT_BYTES` | `18 MB` | 全部附件合计上限（原始大小，编码后约 24MB） |
+| `ATTACHMENT_ENCODING_RATIO` | `4/3` | Base64 膨胀系数，用于把原始大小换算成传输体积 |
 
-阈值留了余量：QQ 邮箱单封上限约 25MB，而 Base64 编码会让体积膨胀约 1.37 倍。
+**判断口径是编码后的体积，不是文件属性里显示的大小。** 原因：QQ 限制的是
+传输中的字节数，而 Base64 编码每 3 字节原文变成 4 字节，体积增加约 1/3。
+若按原始大小比较（早期实现就是如此），18MB 的文件实际传输约 24MB，
+余量会算错。18MB 的默认值即由此反推：18 × 1.33 ≈ 24MB，低于 QQ 的约 25MB 上限。
+
 单件超限与合计超限会**分开报告**——前者通常是选错了文件，后者是「每件都不大但加起来太多」。
+错误提示里会同时给出原始大小、编码后估算与精确字节数，便于判断差距。
 
 ---
 
@@ -268,13 +272,16 @@ REST 端点仅用于人工排查，不参与 MCP 协议。
 
 ## 使用方式
 
-三个客户端都能对话式发信，按需要选一个：
+两个客户端，定位不同：
 
 | 客户端 | 定位 | 需要手动启动服务器 |
 |---|---|---|
-| **`email_butler.py`** | **邮件管家（推荐）**：单入口、带多轮记忆 | ❌ 自己拉起 |
-| `langchain_client.py` | function-calling 示例 | ✅ |
-| `ollama_mcp_client.py` | 手写协议交互示例 | ✅ |
+| **`email_butler.py`** | **邮件管家（日常入口）**：单入口、带多轮记忆、动作可见 | ❌ 自己拉起 |
+| `ollama_mcp_client.py` | 手写协议交互示例：自己拼 JSON-RPC、自己解析模型输出 | ✅ |
+
+> 日常请用**邮件管家**。`ollama_mcp_client.py` 的价值在于展示 MCP 协议本身的
+> 交互方式（握手、会话、`tools/call`），不依赖框架抽象——但它**不带多轮记忆**，
+> 「主题改成…」这类追问接不住，因此不适合日常使用。
 
 ### 邮件管家（推荐日常使用）
 
@@ -329,41 +336,23 @@ Ollama 没启动或模型没拉取时，它会直接给出可照抄的命令，�
 > 因此管家的提示词明确要求**立即调用工具真正发出邮件**——
 > 换成这样的措辞后，每一轮才都能落实为真实发送。
 
-### 方式一：LangChain / LangGraph 智能体
-
-`langchain_client.py` 走标准 function-calling 路线：MCP 工具经
-`langchain-mcp-adapters` 自动转换为 LangChain 工具，由 LangGraph 的
-ReAct 智能体负责推理与调用，无需手工解析模型输出。
-
-需要先启动服务器与 Ollama：
-
-```
-📡 正在从 MCP 服务器加载工具...
-✅ 已从 MCP 服务器加载 5 个工具
-🤖 正在构建智能体（模型：qwen2.5:3b）...
-
-🚀 演示：让智能体检查邮箱配置
-📨 智能体回答：您的QQ邮箱配置有效，连接状态正常。
-```
-
-```bash
-python langchain_client.py tools   # 只列出工具，不需要 Ollama
-python langchain_client.py demo    # 让智能体自动执行一个任务
-python langchain_client.py         # 交互模式
-```
-
-### 方式二：原生 MCP 客户端 + 提示词解析
+### 另一个客户端：手写协议交互示例
 
 `ollama_mcp_client.py` 不依赖 LangChain：直接使用官方 MCP 客户端，
 并用字符串提示词让模型输出 `{tool, parameters}` JSON，再正则提取。
 
 它的价值在于**展示了 MCP 协议本身的交互方式**（握手、会话、`tools/call`），
-不依赖任何框架抽象。代价是解析模型输出比较脆弱——两者正好构成一组对照。
+不依赖任何框架抽象。需要你自己先启动服务器与 Ollama：
 
 ```bash
+python run_server.py               # 另开一个窗口
 python ollama_mcp_client.py        # 交互模式
 python ollama_mcp_client.py test   # 直接跑一个固定测试
 ```
+
+⚠️ 它**不带多轮记忆**（每轮独立解析），因此「主题改成…」这类追问会失败。
+这是刻意保留的简单实现，用于对照说明「为什么管家需要维护对话历史」，
+不要拿它做日常发信。
 
 ### 直接调用 HTTP 端点
 
@@ -750,8 +739,7 @@ qqmail-mcp-tool/
 ├── idempotency.py           # 幂等键（防止重复发信）
 ├── email_butler.py          # 邮件管家（推荐入口：自动起服务器 + 多轮记忆）
 ├── 启动管家.bat              # 双击启动管家
-├── langchain_client.py      # LangGraph 智能体客户端
-├── ollama_mcp_client.py     # 原生 MCP 客户端 + 提示词解析
+├── ollama_mcp_client.py     # 手写协议交互示例（不带多轮记忆）
 ├── teacher_config_sample.py # 配置示例与说明
 ├── create_attachments.py    # 生成测试附件
 ├── requirements.txt         # 运行时依赖

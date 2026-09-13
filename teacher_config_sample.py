@@ -41,8 +41,8 @@ TEACHER_ENVIRONMENT_CONFIG = {
             "├── metrics.py             # 发送指标",
             "├── mcp_server.py          # MCP 服务器（官方 Streamable HTTP 传输）",
             "├── run_server.py          # 服务器启动脚本",
-            "├── ollama_mcp_client.py   # 原生 MCP 客户端 + Ollama",
-            "├── langchain_client.py    # LangChain/LangGraph 智能体客户端",
+            "├── email_butler.py        # 邮件管家（推荐日常使用）",
+            "├── ollama_mcp_client.py   # 手写协议交互示例",
             "├── teacher_config_sample.py",
             "├── tests/                 # pytest 测试套件",
             "└── attachments/           # 附件目录",
@@ -112,7 +112,7 @@ TEACHER_ENVIRONMENT_CONFIG = {
         "步骤2": "安装依赖: pip install -r requirements.txt",
         "步骤3": "运行测试: python test_mcp.py",
         "步骤4": "启动服务器: python mcp_server.py",
-        "步骤5": "启动客户端: python langchain_client.py",
+        "步骤5": "启动管家: python email_butler.py（会自动拉起 MCP 服务器）",
         "验证": "检查邮箱是否收到测试邮件"
     },
 

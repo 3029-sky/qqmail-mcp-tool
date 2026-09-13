@@ -10,7 +10,7 @@ python-dotenv>=1.0.0
 rich>=13.0.0
 python-multipart>=0.0.6
 
-# LangChain 客户端（langchain_client.py）
+# 邮件管家与智能体（email_butler.py）
 # langchain-ollama 提供实现 bind_tools 的 ChatOllama；
 # langchain-community 里的同名类没有实现该方法，会导致 create_agent 报 NotImplementedError。
 langchain>=1.0.0
