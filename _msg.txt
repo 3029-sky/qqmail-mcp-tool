@@ -1,0 +1,13 @@
+﻿清理作业痕迹：删除 save_environment_config 与过时示例文件
+
+项目对外表述统一为「对话式邮件管家」，不再残留与作业相关的产物。
+
+- 删除 teacher_config_sample.py 与 4 个过时示例附件；
+  attachments/ 改为由 create_attachments.py 生成中性的示例报表/纪要/配置
+- 移除 save_environment_config 工具：它没有产品含义，属凑数工具，
+  4 个语义明确的工具优于 5 个。随之删除仅被它使用的 _write_json_atomically
+- 三份文档同步：工具 5→4、用例 253→243、项目结构与源码行数按实际校正，
+  删除「配置文件写入是原子的」一节
+- 示例文件名统一（测试数据.csv → 示例报表.csv），代码与测试一并更新
+
+测试：243 passed

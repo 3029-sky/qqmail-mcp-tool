@@ -229,9 +229,6 @@ class FakeEmailTools:
     async def check_email_config(self, **kwargs):
         return await self._record("check_email_config", **kwargs)
 
-    async def save_environment_config(self, **kwargs):
-        return await self._record("save_environment_config", **kwargs)
-
 
 @pytest.fixture
 def fake_email_tools():

@@ -20,7 +20,6 @@ EXPECTED_TOOLS = {
     "send_html_email",
     "send_email_with_attachment",
     "check_email_config",
-    "save_environment_config",
 }
 
 
@@ -82,11 +81,6 @@ def test_validate_only_checks_presence_not_type():
 def test_validate_rejects_absent_key():
     with pytest.raises(MissingArgumentsError):
         validate_arguments("send_text_email", {"subject": "s", "body": "b"})
-
-
-def test_validate_allows_empty_dict_for_optional_object():
-    """save_environment_config 的 config_data 允许空字典（0 参数场景）。"""
-    validate_arguments("save_environment_config", {"config_data": {}})
 
 
 def test_validate_rejects_unknown_tool():
@@ -223,12 +217,6 @@ async def test_attachment_tool_injects_default_body(fake_email_tools):
     assert kwargs["is_html"] is False
 
 
-async def test_save_config_injects_default_filename(fake_email_tools):
-    await dispatch_tool("save_environment_config", {"config_data": {}}, fake_email_tools)
-    _, kwargs = fake_email_tools.calls[0]
-    assert kwargs["filename"].endswith(".json")
-
-
 async def test_html_tool_passes_html_body(fake_email_tools):
     await dispatch_tool(
         "send_html_email",
@@ -254,7 +242,7 @@ async def test_result_lists_actual_attachments(fake_email_tools):
         "success": True,
         "message": "邮件发送成功",
         "to": "a@b.com",
-        "attachments": [r"C:\data\测试数据.csv"],
+        "attachments": [r"C:\data\示例报表.csv"],
     }
     result = await dispatch_tool(
         "send_email_with_attachment",
@@ -263,7 +251,7 @@ async def test_result_lists_actual_attachments(fake_email_tools):
     )
     text = result[0].text
     assert "附件:" in text
-    assert "测试数据.csv" in text
+    assert "示例报表.csv" in text
 
 
 async def test_result_reports_attachment_substitution(fake_email_tools):
@@ -272,8 +260,8 @@ async def test_result_reports_attachment_substitution(fake_email_tools):
         "success": True,
         "message": "邮件发送成功",
         "to": "a@b.com",
-        "attachments": [r"C:\data\测试数据.csv"],
-        "attachment_substitutions": ["测试数据.xlsx → 测试数据.csv"],
+        "attachments": [r"C:\data\示例报表.csv"],
+        "attachment_substitutions": ["示例报表.xlsx → 示例报表.csv"],
     }
     result = await dispatch_tool(
         "send_email_with_attachment",
@@ -282,7 +270,7 @@ async def test_result_reports_attachment_substitution(fake_email_tools):
     )
     text = result[0].text
     assert "自动修正" in text
-    assert "测试数据.xlsx → 测试数据.csv" in text
+    assert "示例报表.xlsx → 示例报表.csv" in text
 
 
 async def test_result_omits_attachment_line_when_none(fake_email_tools):

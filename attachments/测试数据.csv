@@ -1,6 +1,0 @@
-功能编号,功能名称,状态,测试时间
-1,send_text_email,通过,2026-09-13 20:25
-2,send_html_email,通过,2026-09-13 20:25
-3,send_email_with_attachment,通过,2026-09-13 20:25
-4,check_email_config,通过,2026-09-13 20:25
-5,save_environment_config,通过,2026-09-13 20:25

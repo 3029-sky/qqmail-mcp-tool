@@ -117,25 +117,6 @@ TOOL_DEFS: List[types.Tool] = [
         description="检查QQ邮箱配置和连接状态",
         inputSchema={"type": "object", "properties": {}},
     ),
-    types.Tool(
-        name="save_environment_config",
-        description="保存老师的环境配置作为附件",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "config_data": {
-                    "type": "object",
-                    "description": "环境配置数据（JSON格式）",
-                },
-                "filename": {
-                    "type": "string",
-                    "description": "保存的文件名（默认teacher_environment_config.json）",
-                    "default": "teacher_environment_config.json",
-                },
-            },
-            "required": ["config_data"],
-        },
-    ),
 ]
 
 #: 工具名 -> 定义，便于 O(1) 查找与 schema 校验
@@ -152,7 +133,6 @@ TOOL_TIMEOUTS: Dict[str, float] = {
     "send_html_email": 30.0,
     "send_email_with_attachment": 45.0,
     "check_email_config": 20.0,
-    "save_environment_config": 10.0,
 }
 
 
@@ -264,18 +244,6 @@ def _build_call(name: str, arguments: Dict[str, Any], email_tools: Any) -> Calla
         )
     if name == "check_email_config":
         return email_tools.check_email_config()
-    if name == "save_environment_config":
-        config_data = arguments.get("config_data") or {
-            "project": "QQ邮箱MCP工具",
-            "created_at": datetime.now().isoformat(),
-            "status": "运行正常",
-        }
-        filename = arguments.get("filename") or (
-            "环境备份_%s.json" % datetime.now().strftime("%Y%m%d_%H%M%S")
-        )
-        return email_tools.save_environment_config(
-            config_data=config_data, filename=filename
-        )
     raise UnknownToolError(name)
 
 

@@ -4,7 +4,7 @@
 规范的服务，让 AI 智能体能够通过标准协议代你发送邮件。
 
 服务基于 FastAPI + 官方 MCP Python SDK 的 **Streamable HTTP** 传输层实现，
-对外暴露 5 个邮件工具；仓库内附带一个开箱即用的**邮件管家**客户端
+对外暴露 4 个邮件工具；仓库内附带一个开箱即用的**邮件管家**客户端
 （`email_butler.py`：单入口启动、多轮对话记忆、动作可见）。
 
 ---
@@ -49,11 +49,11 @@
 |---|---|
 | **对话式发信** | `email_butler.py` 单入口启动，用中文说"给我自己发封邮件，说早上好"即可；带多轮记忆，能接住"主题改成…"这类追问 |
 | **标准 MCP 协议** | 使用官方 Streamable HTTP 传输层，支持完整的 `initialize` 握手与会话管理，任意合规 MCP 客户端均可接入 |
-| **5 个邮件工具** | 纯文本 / HTML / 附件邮件，配置检查，环境配置保存 |
+| **4 个邮件工具** | 纯文本 / HTML / 附件邮件，以及配置检查 |
 | **SMTP 连接复用** | 专用工作线程独占连接，实测 5 封邮件仅建立 1 条 TLS 连接 |
 | **结构化日志** | 可选单行 JSON 输出，便于日志系统采集 |
 | **发送指标** | 成功率、延迟分位数、失败原因分布，经 `/metrics` 暴露 |
-| **零外部依赖的测试** | 替换 SMTP/IMAP 层与注入替身，253 个用例不联网、不碰真实邮箱、约 3.5 秒跑完 |
+| **零外部依赖的测试** | 替换 SMTP/IMAP 层与注入替身，243 个用例不联网、不碰真实邮箱、约 3.5 秒跑完 |
 
 ---
 
@@ -209,11 +209,10 @@ python run_server.py
 | `send_html_email` | `to_email`, `subject`, `html_body`, `cc?`, `bcc?`, `idempotency_key?` | HTML 邮件（自动附带纯文本回退） |
 | `send_email_with_attachment` | `to_email`, `subject`, `attachment_paths`, `body?`, `cc?`, `bcc?`, `is_html?`, `idempotency_key?` | 带附件邮件；省略 `body` 时自动生成正文 |
 | `check_email_config` | — | 检查 SMTP 配置与连通性 |
-| `save_environment_config` | `config_data`, `filename?` | 把配置保存为 `attachments/` 下的 JSON 文件 |
 
 `to_email` 接受单个字符串或字符串数组。
 
-### 附件行为（两条容易踩的规则）
+### 附件行为（三条容易踩的规则）
 
 **1. 附件找不到会中止发送，而不是悄悄发出去。**
 
@@ -229,22 +228,22 @@ python run_server.py
 
 **2. 文件名说错时会尝试修正，并告知你替换了什么。**
 
-小模型常把文件名拼错或猜错扩展名（实测：目录里是 `测试数据.csv`，
-模型给出 `测试数据.xlsx`）。因此路径解析按下列顺序尝试：
+小模型常把文件名拼错或猜错扩展名（实测：目录里是 `示例报表.csv`，
+模型给出 `示例报表.xlsx`）。因此路径解析按下列顺序尝试：
 
 | 顺序 | 规则 | 例子 |
 |---|---|---|
 | 1 | 原路径存在 → 原样使用 | — |
-| 2 | 主干一致，仅扩展名不同 | `测试数据.xlsx` → `测试数据.csv` |
-| 3 | 归一化后一致（裁掉「表/文件/文档/附件」等修饰词） | `测试数据表.xlsx` → `测试数据.csv` |
+| 2 | 主干一致，仅扩展名不同 | `示例报表.xlsx` → `示例报表.csv` |
+| 3 | 归一化后一致（裁掉「表/文件/文档/附件」等修饰词） | `示例报表表.xlsx` → `示例报表.csv` |
 | 4 | **候选不唯一 → 不猜，报错** | `数据.txt`（同时存在 `.csv` 和 `.xlsx`）|
 
 发生替换时，结果里会写明，避免「悄悄换了另一个文件」而用户不知情：
 
 ```
 ✅ 邮件发送成功
-附件: 测试数据.csv
-（附件名已自动修正：测试数据.xlsx → 测试数据.csv）
+附件: 示例报表.csv
+（附件名已自动修正：示例报表.xlsx → 示例报表.csv）
 ```
 
 第 4 条是刻意加的保护：**多个候选时宁可报错，也不发出用户没指定的文件。**
@@ -367,7 +366,7 @@ python -m pytest -q         # 精简输出
 python -m pytest tests/test_email_tools.py -v
 ```
 
-套件共 253 个用例，**全程不发起真实网络请求**：
+套件共 243 个用例，**全程不发起真实网络请求**：
 
 | 文件 | 关注点 |
 |---|---|
@@ -541,19 +540,6 @@ MCP SDK 会依据 `inputSchema` 做完整的 jsonschema 校验（含类型检查
 不会生效——这曾导致测试隔离失效，测试写进了真实的 `attachments/` 目录。
 现已改为只读属性，每次读取都从配置解析。这类"缓存配置"的写法很常见，
 但会让对象的行为依赖构造顺序，尤其在测试里非常容易踩坑。
-
-### 配置文件写入是原子的
-
-`save_environment_config` 采用「写同目录临时文件 + `os.replace` 覆盖」：
-
-- 进程中途被终止时，目标文件要么是旧内容、要么是新内容，
-  **不会出现被截断的半个 JSON**；
-- 写盘前调用 `fsync`，确保数据真正落盘后再替换；
-- 失败路径会清理临时文件，不留下垃圾；
-- 若目标文件被其他进程占用（Windows 上文件锁较严格），
-  退回为直接写入并记录警告——宁可放弃原子性，也不让保存功能整体失败。
-
-注意临时文件必须与目标**同目录**，否则 `os.replace` 可能跨文件系统而失去原子性。
 
 ### 关于 QQ 邮箱的非标准响应
 
@@ -733,9 +719,8 @@ qqmail-mcp-tool/
 ├── retry.py                 # 重试策略与错误分类
 ├── idempotency.py           # 幂等键（防止重复发信）
 ├── email_butler.py          # 邮件管家（推荐入口：自动起服务器 + 多轮记忆）
-├── 启动管家.bat              # 双击启动管家
-├── teacher_config_sample.py # 配置示例与说明
-├── create_attachments.py    # 生成测试附件
+├── 启动管家.bat              # 双击启动管家（仅含 ASCII，中文提示由 Python 输出）
+├── create_attachments.py    # 生成示例附件（报表/纪要/配置）
 ├── requirements.txt         # 运行时依赖
 ├── requirements-dev.txt     # 测试依赖
 ├── pytest.ini               # pytest 配置
@@ -745,7 +730,7 @@ qqmail-mcp-tool/
 ├── .env.example             # 配置模板（可提交）
 ├── .env.test                # CI 用占位配置
 ├── .github/workflows/tests.yml
-├── tests/                   # 253 个用例
+├── tests/                   # 243 个用例
 │   ├── conftest.py
 │   ├── test_config.py
 │   ├── test_auth.py
@@ -756,7 +741,7 @@ qqmail-mcp-tool/
 │   ├── test_email_tools.py
 │   ├── test_mcp_server.py
 │   └── test_tool_defs.py
-└── attachments/             # 附件与配置备份输出目录
+└── attachments/             # 附件目录（示例附件由 create_attachments.py 生成）
 ```
 
 ---

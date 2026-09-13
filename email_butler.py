@@ -165,7 +165,6 @@ TOOL_LABELS = {
     "send_html_email": "发送 HTML 邮件",
     "send_email_with_attachment": "发送带附件的邮件",
     "check_email_config": "检查邮箱配置",
-    "save_environment_config": "保存配置",
 }
 
 SYSTEM_PROMPT_TEMPLATE = """你是用户的邮件管家，名字叫「小邮」。你能调用工具帮用户发邮件。
@@ -207,7 +206,7 @@ def list_attachments(directory: Path) -> List[str]:
     """
     列出附件目录中的文件名，供提示词使用。
 
-    把真实文件名告诉模型，是避免它凭空拼出「测试数据.xlsx」这类
+    把真实文件名告诉模型，是避免它凭空拼出「示例报表.xlsx」这类
     并不存在的路径——那样会被附件校验拦下，用户白等一场。
     """
     try:

@@ -21,7 +21,6 @@ import logging
 import mimetypes
 import os
 import smtplib
-import tempfile
 import threading
 import time
 from datetime import datetime
@@ -74,8 +73,6 @@ class JsonLogFormatter(logging.Formatter):
 def configure_logging(json_logs: Optional[bool] = None) -> None:
     """按需把根日志配置为 JSON 格式。json_logs 默认取环境变量 JSON_LOGS。"""
     if json_logs is None:
-        import os
-
         json_logs = os.getenv("JSON_LOGS", "").lower() in ("1", "true", "yes")
 
     if json_logs:
@@ -148,7 +145,7 @@ def _now() -> str:
 # ---------------------------------------------------------------------------
 
 #: 归一化文件名主干时裁掉的后缀词。
-#: 小模型常给文件名加修饰词，例如把「测试数据.csv」说成「测试数据表.xlsx」，
+#: 小模型常给文件名加修饰词，例如把「示例报表.csv」说成「示例报表表.xlsx」，
 #: 裁掉这些词后两侧就能对上。
 _STEM_SUFFIXES = (
     "文件", "表格", "文档", "附件", "那份", "这个", "那个", "表", "档",
@@ -173,7 +170,7 @@ def resolve_attachment_paths(paths: List[str]) -> tuple:
     把用户/模型给出的附件路径尽量解析成真实存在的文件。
 
     为什么需要它：小模型经常把文件名拼错或猜错扩展名
-    （实测：目录里是 `测试数据.csv`，模型给出 `测试数据.xlsx`）。
+    （实测：目录里是 `示例报表.csv`，模型给出 `示例报表.xlsx`）。
     直接报错会让用户白跑一趟，而用户的本意显然是那个真实存在的文件。
 
     解析顺序：
@@ -187,7 +184,7 @@ def resolve_attachment_paths(paths: List[str]) -> tuple:
       避免它悄悄换成别的文件却不说明。
     """
     #: 归一化时裁掉的后缀词。小模型加修饰词时能对上，
-    #: 例如把「测试数据.csv」说成「测试数据表.xlsx」
+    #: 例如把「示例报表.csv」说成「示例报表表.xlsx」
     resolved: List[str] = []
     missing: List[str] = []
     substitutions: List[str] = []
@@ -212,7 +209,7 @@ def resolve_attachment_paths(paths: List[str]) -> tuple:
             if Path(e.name).stem.lower() == stem.lower()
             or e.name.lower() == original.name.lower()
         ]
-        # 第二优先：归一化后一致（能吸收「测试数据表」这类修饰词）
+        # 第二优先：归一化后一致（能吸收「示例报表表」这类修饰词）
         normal = [
             e for e in entries if _normalize_stem(e.name) == _normalize_stem(original.name)
         ]
@@ -785,47 +782,6 @@ class QQMailSender:
 # 异步包装与高层工具
 # ---------------------------------------------------------------------------
 
-def _write_json_atomically(path: Path, data: Dict[str, Any]) -> int:
-    """
-    原子地写入 JSON 文件，返回写入字节数。
-
-    先写同目录下的临时文件再 os.replace 覆盖目标，因此：
-      - 进程中途被终止时，目标文件要么是旧内容、要么是新内容，不会出现半个文件
-      - 读取方永远不会看到写了一半的 JSON
-
-    注意：临时文件必须与目标同目录，否则 os.replace 可能跨文件系统而失去原子性。
-    若目标被其他进程占用（Windows 上文件锁较严格），退回为直接写入并记录警告——
-    宁可丢原子性，也不要让保存功能整体失败。
-    """
-    directory = path.parent
-    fd, tmp_name = tempfile.mkstemp(
-        dir=str(directory), prefix=".%s." % path.name, suffix=".tmp"
-    )
-    tmp_path = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.flush()
-            os.fsync(f.fileno())  # 确保数据落盘后再替换
-
-        try:
-            os.replace(tmp_path, path)
-        except (PermissionError, OSError) as e:
-            logger.warning("原子替换失败（%s），退回直接写入: %s", type(e).__name__, e)
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            return path.stat().st_size
-
-        return path.stat().st_size
-    finally:
-        # 成功替换后临时文件已不存在；失败路径需要清理残留
-        try:
-            if tmp_path.exists():
-                tmp_path.unlink()
-        except OSError:  # noqa: BLE001 - 清理失败不应影响主流程
-            pass
-
-
 class QQMailTools:
     """面向 MCP 工具层的高层封装（异步接口）。"""
 
@@ -944,38 +900,6 @@ class QQMailTools:
                 to=self.sender.smtp_email, recipients=[],
                 reason="transport_error", error=str(e),
             )
-
-    async def save_environment_config(
-        self, config_data: Dict[str, Any], filename: str = "teacher_environment_config.json"
-    ) -> Dict[str, Any]:
-        """把环境配置保存为附件文件。"""
-        try:
-            if not config_data:
-                config_data = {
-                    "student": "示例用户",
-                    "project": "QQ邮箱MCP工具",
-                    "setup_time": _now(),
-                    "status": "测试成功",
-                }
-
-            config_data["_metadata"] = {
-                "created_at": _now(),
-                "created_by": "QQ邮箱MCP工具",
-                "purpose": "老师的环境配置参考",
-            }
-
-            file_path = self.attachment_dir / filename
-            file_size = _write_json_atomically(file_path, config_data)
-
-            logger.info("环境配置已保存 path=%s size=%d", file_path, file_size)
-            return _result(
-                True, "环境配置已保存为附件", recipients=[],
-                file_path=str(file_path), filename=filename,
-                file_size=file_size,
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.error("保存环境配置失败: %s", e)
-            return _result(False, f"保存失败: {e}", recipients=[], reason="write_error")
 
 
 def get_send_metrics() -> Dict[str, Any]:

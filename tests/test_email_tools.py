@@ -32,20 +32,6 @@ def tools(live_sender):
     return t
 
 
-@pytest.fixture
-def isolated_tools(tmp_path, monkeypatch):
-    """
-    附件目录被重定向到临时目录的实例。
-
-    attachment_dir 现在是「调用时从 settings 解析」的属性，不再于构造时固化，
-    因此 patch 与构造的先后顺序不再重要——这正是把它从实例属性改为属性的原因。
-    """
-    import email_tools
-
-    monkeypatch.setattr(email_tools.settings, "attachment_dir", tmp_path)
-    return QQMailTools()
-
-
 # ---------------------------------------------------------------------------
 # 附件目录的解析时机
 # ---------------------------------------------------------------------------
@@ -191,17 +177,17 @@ def test_wrong_extension_is_recovered(tools, fake_smtp, tmp_path):
     回归测试：模型常把扩展名猜错（实测：目录里是 .csv，模型给出 .xlsx）。
     目录中主干唯一时应把文件找回来，并在结果里说明替换了什么。
     """
-    real = tmp_path / "测试数据.csv"
+    real = tmp_path / "示例报表.csv"
     real.write_text("a,b\n1,2", encoding="utf-8")
 
     result = tools.sender.send_email_sync(
-        "a@b.com", "s", "b", attachments=[str(tmp_path / "测试数据.xlsx")]
+        "a@b.com", "s", "b", attachments=[str(tmp_path / "示例报表.xlsx")]
     )
 
     assert result["success"] is True, "应能按主干找回真实文件"
     assert result["attachments"] == [str(real)]
     assert "自动修正" in result.get("note", "")
-    assert result["attachment_substitutions"] == ["测试数据.xlsx → 测试数据.csv"]
+    assert result["attachment_substitutions"] == ["示例报表.xlsx → 示例报表.csv"]
 
 
 def test_name_case_difference_is_recovered(tools, fake_smtp, tmp_path):
@@ -261,10 +247,10 @@ def test_resolve_attachment_paths_returns_triple(tmp_path):
 @pytest.mark.parametrize(
     "wrong_name",
     [
-        "测试数据.xlsx",       # 仅扩展名猜错
-        "测试数据表.xlsx",     # 多了修饰词「表」
-        "测试数据文件.xlsx",   # 多了「文件」
-        "测试数据表",          # 无扩展名且带修饰词
+        "示例报表.xlsx",       # 仅扩展名猜错
+        "示例报表表.xlsx",     # 多了修饰词「表」
+        "示例报表文件.xlsx",   # 多了「文件」
+        "示例报表表",          # 无扩展名且带修饰词
     ],
 )
 def test_model_guessed_filenames_are_recovered(tools, fake_smtp, tmp_path, wrong_name):
@@ -274,7 +260,7 @@ def test_model_guessed_filenames_are_recovered(tools, fake_smtp, tmp_path, wrong
     实测过的三种：仅扩展名不同、多加「表」、多加「文件」。
     目录中主干唯一时都应能找回，否则用户会以为发成功了。
     """
-    real = tmp_path / "测试数据.csv"
+    real = tmp_path / "示例报表.csv"
     real.write_text("a,b\n1,2", encoding="utf-8")
 
     result = tools.sender.send_email_sync(
@@ -288,7 +274,7 @@ def test_model_guessed_filenames_are_recovered(tools, fake_smtp, tmp_path, wrong
 
 def test_unrelated_filename_is_still_rejected(tools, fake_smtp, tmp_path):
     """归一化不能宽松到「什么都匹配」——完全不相干的名字仍应报错。"""
-    (tmp_path / "测试数据.csv").write_text("x", encoding="utf-8")
+    (tmp_path / "示例报表.csv").write_text("x", encoding="utf-8")
     result = tools.sender.send_email_sync(
         "a@b.com", "s", "b", attachments=[str(tmp_path / "完全不相干.pdf")]
     )
@@ -299,8 +285,8 @@ def test_unrelated_filename_is_still_rejected(tools, fake_smtp, tmp_path):
 def test_normalize_stem_strips_suffix_words():
     from email_tools import _normalize_stem
 
-    assert _normalize_stem("测试数据表.xlsx") == _normalize_stem("测试数据.csv")
-    assert _normalize_stem("测试数据文件.txt") == _normalize_stem("测试数据.csv")
+    assert _normalize_stem("示例报表表.xlsx") == _normalize_stem("示例报表.csv")
+    assert _normalize_stem("示例报表文件.txt") == _normalize_stem("示例报表.csv")
     assert _normalize_stem("Report.PDF") == _normalize_stem("report.csv")
     assert _normalize_stem("A B.txt") == _normalize_stem("ab.md")
 
@@ -589,116 +575,6 @@ async def test_check_email_config_reports_auth_failure(tools, fake_smtp):
 
     assert result["success"] is False
 
-
-# ---------------------------------------------------------------------------
-# save_environment_config
-# ---------------------------------------------------------------------------
-
-async def test_save_environment_config_writes_file(isolated_tools, tmp_path):
-    result = await isolated_tools.save_environment_config({"k": "v"}, "cfg.json")
-
-    assert result["success"] is True
-    written = tmp_path / "cfg.json"
-    assert written.exists(), "文件必须写入被重定向后的目录"
-
-    import json
-
-    data = json.loads(written.read_text(encoding="utf-8"))
-    assert data["k"] == "v"
-    assert "_metadata" in data
-
-
-async def test_save_environment_config_empty_data_uses_placeholder(
-    isolated_tools, tmp_path
-):
-    result = await isolated_tools.save_environment_config({}, "empty.json")
-    assert result["success"] is True
-
-    import json
-
-    data = json.loads((tmp_path / "empty.json").read_text(encoding="utf-8"))
-    assert data["project"] == "QQ邮箱MCP工具"
-
-
-async def test_save_environment_config_reports_write_failure(isolated_tools, monkeypatch):
-    """写入失败时必须返回失败结果，而不是把异常抛给调用方。"""
-    import json as json_module
-
-    def boom(*args, **kwargs):
-        raise OSError("disk full")
-
-    monkeypatch.setattr(json_module, "dump", boom)
-    result = await isolated_tools.save_environment_config({"k": "v"}, "x.json")
-    assert result["success"] is False
-    assert "保存失败" in result["message"]
-
-
-# ---------------------------------------------------------------------------
-# 原子写入
-# ---------------------------------------------------------------------------
-
-async def test_save_overwrites_existing_file(isolated_tools, tmp_path):
-    """重复保存同一文件名应被覆盖，而不是产生第二份或损坏。"""
-    import json as json_module
-
-    await isolated_tools.save_environment_config({"v": 1}, "same.json")
-    await isolated_tools.save_environment_config({"v": 2}, "same.json")
-
-    data = json_module.loads((tmp_path / "same.json").read_text(encoding="utf-8"))
-    assert data["v"] == 2
-    assert list(tmp_path.glob("same.json")) == [tmp_path / "same.json"]
-
-
-async def test_save_leaves_no_temp_files(isolated_tools, tmp_path):
-    """
-    原子写入用「临时文件 + os.replace」，成功路径不得留下临时文件残留。
-    """
-    await isolated_tools.save_environment_config({"k": "v"}, "clean.json")
-
-    leftovers = [p.name for p in tmp_path.iterdir() if p.name != "clean.json"]
-    assert leftovers == [], "不应残留临时文件: %s" % leftovers
-
-
-async def test_temp_file_is_cleaned_up_on_failure(isolated_tools, tmp_path, monkeypatch):
-    """
-    写入中途失败时，临时文件必须被清理，目标文件不应出现（或保持旧内容）。
-    """
-    import json as json_module
-
-    def boom(*args, **kwargs):
-        raise OSError("disk full")
-
-    monkeypatch.setattr(json_module, "dump", boom)
-    result = await isolated_tools.save_environment_config({"k": "v"}, "bad.json")
-
-    assert result["success"] is False
-    assert list(tmp_path.iterdir()) == [], "失败后不应留下任何文件"
-
-
-async def test_existing_file_survives_failed_overwrite(isolated_tools, tmp_path, monkeypatch):
-    """
-    原子写入的关键性质：覆盖失败时，原有的文件内容必须完好无损，
-    而不是被截断成半个文件。
-    """
-    import json as json_module
-
-    target = tmp_path / "keep.json"
-    target.write_text('{"original": true}', encoding="utf-8")
-
-    def boom(*args, **kwargs):
-        raise OSError("disk full")
-
-    monkeypatch.setattr(json_module, "dump", boom)
-    result = await isolated_tools.save_environment_config({"k": "v"}, "keep.json")
-
-    assert result["success"] is False
-    assert json_module.loads(target.read_text(encoding="utf-8")) == {"original": True}
-    assert list(tmp_path.iterdir()) == [target], "临时文件必须被清理"
-
-
-async def test_save_reports_written_size(isolated_tools):
-    result = await isolated_tools.save_environment_config({"k": "v"}, "sz.json")
-    assert result["file_size"] > 0
 
 
 # ---------------------------------------------------------------------------

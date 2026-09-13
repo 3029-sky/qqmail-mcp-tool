@@ -4,17 +4,17 @@
 # 真实配置：包含 QQ 邮箱授权码，只存在于本机
 .env
 .env.*
+# CI 会把 .env.test 复制成 .env 来跑测试
 !.env.example
+!.env.test
 # 保险：任何目录下的 .env 变体
 **/.env
 **/.env.local
 **/.env.production
 
-# 运行时可能生成的环境配置备份（含邮箱等个人信息）
+# 运行时生成的 JSON 附件可能含邮箱等个人信息，默认不入库
+# （示例配置由 create_attachments.py 生成，可随时重建）
 attachments/*.json
-attachments/环境备份_*.json
-attachments/我的环境备份.json
-attachments/老师环境配置详细版.json
 
 # ============================================================
 # 虚拟环境 —— 不要提交，用 requirements.txt 重建

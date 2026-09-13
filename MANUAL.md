@@ -87,7 +87,7 @@ SMTP_PASSWORD=16位授权码
 .\venv\Scripts\python.exe -m pytest -q
 ```
 
-看到 `253 passed` 说明环境完好。**这一步不需要网络、不碰邮箱**，
+看到 `243 passed` 说明环境完好。**这一步不需要网络、不碰邮箱**，
 是最快的环境自检方式。
 
 ---
@@ -106,8 +106,8 @@ cd E:\rise\qqmail\qqmail-mcp-tool
 ```
 · 正在启动 MCP 服务器…
 · MCP 服务器就绪
-· 已加载 5 个工具：发送邮件、发送 HTML 邮件、发送带附件的邮件、检查邮箱配置、保存配置
-· 附件目录可用文件：周报.txt、测试数据.csv、…
+· 已加载 4 个工具：发送邮件、发送 HTML 邮件、发送带附件的邮件、检查邮箱配置
+· 附件目录可用文件：示例报表.csv、示例会议纪要.txt、示例配置.json
 
 ╭──────────────────────────────────────────────╮
 │  📬  邮件管家                                 │
@@ -164,7 +164,7 @@ cd E:\rise\qqmail\qqmail-mcp-tool
 | 改上一封 | 主题改成… / 正文改成… / 换成… |
 | 换收件人 | 还是发给我自己吧 |
 | 用 HTML | 发一封 HTML 格式的邮件，内容是… |
-| 带附件 | 把 `周报.txt` 作为附件发给我自己 |
+| 带附件 | 把 `示例报表.csv` 作为附件发给我自己 |
 | 查配置 | 检查一下我的邮箱配置 |
 
 **理解那三行符号**：
@@ -187,7 +187,7 @@ cd E:\rise\qqmail\qqmail-mcp-tool
 附件默认放在项目的 `attachments\` 目录。目录里的文件会在启动时列出来。
 
 ```
-你 ▸ 把 周报.txt 作为附件发给我自己
+你 ▸ 把 示例报表.csv 作为附件发给我自己
 ```
 
 ### 完整路径
@@ -205,15 +205,15 @@ cd E:\rise\qqmail\qqmail-mcp-tool
 
 | 你（或模型）说的 | 实际使用 |
 |---|---|
-| `测试数据.xlsx` | `测试数据.csv` |
-| `测试数据表.xlsx` | `测试数据.csv` |
-| `周报.doc` | `周报.txt` |
+| `示例报表.xlsx` | `示例报表.csv` |
+| `示例报表表.xlsx` | `示例报表.csv` |
+| `示例会议纪要.doc` | `示例会议纪要.txt` |
 | `完全不相干.pdf` | ❌ 明确报错，**不猜** |
 
 结果会显示：
 
 ```
-  ↩  ✅ 邮件发送成功 附件: 测试数据.csv
+  ↩  ✅ 邮件发送成功 附件: 示例报表.csv
 ```
 
 ### 三条硬性行为
@@ -255,7 +255,7 @@ cd E:\rise\qqmail\qqmail-mcp-tool
 
 管家自己决定用哪个工具，你不需要记。以下是参考。
 
-### 邮件工具（5 个）
+### 邮件工具（4 个）
 
 | 工具 | 必填参数 | 可选参数 |
 |---|---|---|
@@ -263,7 +263,6 @@ cd E:\rise\qqmail\qqmail-mcp-tool
 | `send_html_email` | 收件人、主题、HTML 正文 | 抄送、密送、幂等键 |
 | `send_email_with_attachment` | 收件人、主题、附件路径 | 正文、抄送、密送、HTML、幂等键 |
 | `check_email_config` | — | — |
-| `save_environment_config` | 配置数据 | 文件名 |
 
 ### HTTP 端点（5 个）
 
@@ -462,9 +461,8 @@ OLLAMA_MODEL=qwen2.5:7b
 
 ```python
 import asyncio
-from quick_send import QuickSender   # 若该模块不存在，直接用 email_tools
 
-# 推荐直接用 email_tools 的异步接口
+# email_tools 模块底部已经导出了一个单例，直接拿来用即可
 from email_tools import email_tools
 
 async def main():

@@ -1,117 +1,120 @@
-# create_attachments.py - 创建测试附件
+# create_attachments.py - 生成用于测试的示例附件
+"""
+生成几个小体积的示例附件，方便试发带附件的邮件。
+
+这些文件只用于演示与测试：内容简单、可随时重新生成，
+因此不必手工准备，也不会把真实数据混进仓库。
+"""
+
+import csv
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
-# 确保attachments目录存在
-os.makedirs("attachments", exist_ok=True)
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "attachments")
 
-print("📁 正在创建测试附件文件...")
 
-# 1. 创建老师环境配置详细版.json
-teacher_config = {
-    "项目信息": {
-        "名称": "QQ邮箱MCP工具",
-        "版本": "1.0.0",
-        "创建时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "状态": "测试通过"
-    },
-    "环境配置": {
-        "Python版本": "3.11",
-        "虚拟环境": "venv",
-        "Ollama模型": "qwen2.5:3b",
-        "邮箱": "your_email@qq.com"
-    },
-    "项目结构": [
-        "qqmail-mcp-tool/",
-        "├── config.py",
-        "├── email_tools.py",
-        "├── mcp_server.py",
-        "├── email_butler.py",
-        "├── attachments/",
-        "└── requirements.txt"
-    ],
-    "功能列表": [
-        "send_text_email - 发送纯文本邮件",
-        "send_html_email - 发送HTML邮件",
-        "send_email_with_attachment - 发送带附件邮件",
-        "check_email_config - 检查邮箱配置",
-        "save_environment_config - 保存环境配置"
-    ],
-    "测试数据": {
-        "已测试功能": [1, 2, 3, 4, 5],
-        "发送成功": True,
-        "AI集成": "正常"
-    }
-}
+def write_text(name, content):
+    path = os.path.join(OUTPUT_DIR, name)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    print("  已生成 %s（%d 字节）" % (name, os.path.getsize(path)))
 
-with open("attachments/老师环境配置详细版.json", "w", encoding="utf-8") as f:
-    json.dump(teacher_config, f, ensure_ascii=False, indent=2)
-print("✅ 创建: attachments/老师环境配置详细版.json")
 
-# 2. 创建周报.txt
-weekly_report = """项目周报 - QQ邮箱MCP工具
-报告时间：{time}
+def write_csv(name, header, rows):
+    path = os.path.join(OUTPUT_DIR, name)
+    # newline="" 是 csv 模块的官方建议，避免 Windows 上多出空行
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(header)
+        writer.writerows(rows)
+    print("  已生成 %s（%d 字节）" % (name, os.path.getsize(path)))
 
-本周进展：
-✅ 已完成功能：
-1. 纯文本邮件发送功能
-2. HTML邮件发送功能  
-3. 带附件邮件发送功能
-4. 邮箱配置检查功能
-5. 环境配置保存功能
 
-✅ 技术实现：
-• MCP服务器搭建完成
-• Ollama AI集成成功
-• QQ邮箱SMTP连接正常
-• 自然语言指令解析正常
+def write_json(name, payload):
+    path = os.path.join(OUTPUT_DIR, name)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    print("  已生成 %s（%d 字节）" % (name, os.path.getsize(path)))
 
-✅ 测试结果：
-• 所有5个核心功能可用
-• AI能正确理解自然语言指令
-• 邮件发送成功率：100%
 
-下周计划：
-1. 添加邮件模板功能
-2. 增加邮件发送统计
-3. 优化用户交互界面
+def main():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    today = datetime.now().date()
 
-负责人：你的名字
-联系方式：your_email@qq.com
-""".format(time=datetime.now().strftime("%Y-%m-%d"))
+    print("正在生成示例附件…")
 
-with open("attachments/周报.txt", "w", encoding="utf-8") as f:
-    f.write(weekly_report)
-print("✅ 创建: attachments/周报.txt")
+    # 1) 月度销售报表（CSV）—— 普通表格附件
+    rows = [
+        (6, "华东", "标准版授权", 12, 35880),
+        (5, "华南", "标准版授权", 8, 23920),
+        (4, "华北", "专业版授权", 3, 17970),
+        (3, "华东", "专业版授权", 5, 29950),
+        (2, "西南", "标准版授权", 6, 17940),
+        (1, "华南", "增值服务", 20, 12000),
+        (0, "华东", "增值服务", 15, 9000),
+    ]
+    write_csv(
+        "示例报表.csv",
+        ["日期", "区域", "产品", "数量", "金额"],
+        [[str(today - timedelta(days=n)), r, p, q, a] for n, r, p, q, a in rows],
+    )
 
-# 3. 创建测试数据.csv
-csv_data = """功能编号,功能名称,状态,测试时间
-1,send_text_email,通过,{time}
-2,send_html_email,通过,{time}
-3,send_email_with_attachment,通过,{time}
-4,check_email_config,通过,{time}
-5,save_environment_config,通过,{time}
-""".format(time=datetime.now().strftime("%Y-%m-%d %H:%M"))
+    # 2) 会议纪要（纯文本）—— 正文较长的文本附件
+    write_text(
+        "示例会议纪要.txt",
+        "项目例会纪要\n"
+        "日期：{date}\n"
+        "参会：产品、研发、测试\n"
+        "\n"
+        "一、上周进展\n"
+        "1. 核心发送链路已联调通过，覆盖纯文本、HTML 与附件三类邮件。\n"
+        "2. 异常路径已补充：区分可重试的瞬时故障与不可重试的永久错误。\n"
+        "\n"
+        "二、待办事项\n"
+        "1. 补充发送指标的可视化展示。\n"
+        "2. 评估大批量场景下的连接复用策略。\n"
+        "\n"
+        "三、下次会议\n"
+        "{next_date}\n"
+        "\n"
+        "（本文档为示例文件，内容仅用于演示附件功能。）\n".format(
+            date=today.isoformat(),
+            next_date=(today + timedelta(days=7)).isoformat(),
+        ),
+    )
 
-with open("attachments/测试数据.csv", "w", encoding="utf-8") as f:
-    f.write(csv_data)
-print("✅ 创建: attachments/测试数据.csv")
+    # 3) 服务配置（JSON）—— 结构化数据附件。
+    #    数值直接取自 config.settings，避免示例文件与真实默认值悄悄走偏。
+    from config import settings
 
-# 4. 创建图片占位文件
-image_info = {
-    "图片信息": "这是一个图片文件的占位描述",
-    "实际路径": "需要时替换为真实图片文件",
-    "建议格式": ["jpg", "png", "pdf"],
-    "大小限制": "QQ邮箱附件通常支持25MB以下"
-}
+    write_json(
+        "示例配置.json",
+        {
+            "service": "email-sender",
+            "smtp": {
+                "server": settings.smtp_server,
+                "port": settings.smtp_port,
+            },
+            "limits": {
+                "max_attachment_bytes": settings.max_attachment_bytes,
+                "max_total_attachment_bytes": settings.max_total_attachment_bytes,
+                "attachment_encoding_ratio": round(settings.attachment_encoding_ratio, 4),
+            },
+            "retry": {
+                "max_attempts": settings.send_max_attempts,
+                "initial_delay_seconds": settings.send_retry_initial_delay,
+                "backoff": settings.send_retry_backoff,
+            },
+            "note": "示例文件，仅供演示附件功能使用。",
+        },
+    )
 
-with open("attachments/图片说明.txt", "w", encoding="utf-8") as f:
-    f.write("如需测试图片附件，请在此目录放置真实的图片文件\n")
-    f.write("支持的格式：jpg, png, pdf, docx\n")
-    f.write(json.dumps(image_info, ensure_ascii=False, indent=2))
-print("✅ 创建: attachments/图片说明.txt")
+    print()
+    print("完成。目录：%s" % OUTPUT_DIR)
+    print("现在可以试着发送带附件的邮件了，例如：")
+    print("    把 示例报表.csv 作为附件发给我自己")
 
-print(f"\n🎉 成功创建了4个测试附件文件！")
-print(f"📁 目录: {os.path.abspath('attachments')}")
-print("\n现在可以测试带附件的邮件发送了！")
+
+if __name__ == "__main__":
+    main()
