@@ -25,5 +25,23 @@ jobs:
         # 测试全程使用替身，不发起真实网络请求，因此这里用占位凭据即可
         run: cp .env.test .env
 
+      - name: 环境自检
+        # 把平台与关键模块状态打出来：失败时不必靠猜。
+        # tkinter 在 Linux 上不是默认装的（要 python3-tk），且 Tk 还需要显示服务；
+        # 依赖它的用例会自行跳过，所以这里只报告状态，不当作失败。
+        run: |
+          python - <<'PY'
+          import platform, shutil, sys
+          print("python  :", sys.version.split()[0])
+          print("platform:", platform.platform())
+          for mod in ("tkinter", "win32clipboard", "mcp", "fastapi", "httpx", "pytest"):
+              try:
+                  __import__(mod)
+                  print(f"  {mod:<16} OK")
+              except Exception as e:
+                  print(f"  {mod:<16} 不可用（{type(e).__name__}）")
+          print("DISPLAY :", "已设置" if shutil.which("Xvfb") else "无")
+          PY
+
       - name: 运行测试
         run: python -m pytest -q

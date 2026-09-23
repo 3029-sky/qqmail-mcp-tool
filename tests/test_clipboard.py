@@ -323,8 +323,25 @@ def test_import_multiple_files(no_clipboard, tmp_path):
 # import_clipboard：图片
 # ---------------------------------------------------------------------------
 
-def test_import_image_writes_png(no_clipboard, tmp_path):
-    """剪贴板图片应被写成 PNG 文件。"""
+def test_import_image_writes_png(no_clipboard, tmp_path, monkeypatch):
+    """
+    剪贴板图片应被写成 PNG 文件。
+
+    这里把「PPM -> PNG」那一步换成替身：真实实现要走 tkinter + Tk 窗口，
+    在没有显示服务的环境（CI 的 ubuntu runner）里连 tk.Tk() 都建不起来。
+    本用例要验的是**导入流程**——文件名、类型、落盘位置，
+    真正的 PNG 编码由下面 test_ppm_to_png_encodes_real_png 在支持的平台上验。
+    """
+    import clipboard
+
+    written = []
+
+    def fake_ppm_to_png(ppm, target):
+        written.append(target)
+        target.write_bytes(b"\x89PNG\r\n\x1a\n" + b"stub")
+
+    monkeypatch.setattr(clipboard, "_ppm_to_png", fake_ppm_to_png)
+
     rows = [[(255, 0, 0), (0, 255, 0)], [(0, 0, 255), (255, 255, 0)]]
     no_clipboard["dib"] = make_dib(rows, bpp=32)
 
@@ -338,8 +355,47 @@ def test_import_image_writes_png(no_clipboard, tmp_path):
     assert item.name.startswith("剪贴板图片_")
     assert item.name.endswith(".png")
 
+    assert len(written) == 1, "应恰好写一次 PNG"
+    assert written[0] == att / item.name
     data = (att / item.name).read_bytes()
     assert data[:8] == b"\x89PNG\r\n\x1a\n", "必须是真正的 PNG"
+
+
+def _tk_available() -> bool:
+    """tkinter 能用吗？（缺模块，或没有显示服务时都返回 False）"""
+    try:
+        import tkinter as tk
+    except Exception:  # noqa: BLE001 - 缺 python3-tk 时 ImportError
+        return False
+    try:
+        root = tk.Tk()
+        root.destroy()
+        return True
+    except Exception:  # noqa: BLE001 - 无 DISPLAY 时 TclError
+        return False
+
+
+@pytest.mark.skipif(not _tk_available(),
+                    reason="需要 tkinter 与显示服务（Linux 上装 python3-tk 并设 DISPLAY）")
+def test_ppm_to_png_encodes_real_png(tmp_path):
+    """
+    _ppm_to_png 真的能写出 PNG（Tk 8.6 的 PhotoImage 支持写 PNG）。
+
+    这条用例依赖本机 Tk，所以在无显示环境会被跳过——
+    跳过是**如实反映环境限制**，不是掩盖失败。
+    """
+    from clipboard import _ppm_to_png
+
+    # 2x2 纯红
+    ppm = b"P6\n2 2\n255\n" + bytes([255, 0, 0] * 4)
+    target = tmp_path / "out.png"
+
+    _ppm_to_png(ppm, target)
+
+    assert target.exists()
+    data = target.read_bytes()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    assert len(data) > 20
 
 
 def test_import_broken_image_reports_problem(no_clipboard, tmp_path):
