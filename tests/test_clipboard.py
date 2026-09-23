@@ -10,6 +10,7 @@
 """
 
 import struct
+from pathlib import PurePosixPath, PureWindowsPath
 
 import pytest
 
@@ -435,6 +436,27 @@ def test_import_without_pywin32_reports_clearly(monkeypatch, tmp_path):
 def test_summary_reports_single_file(no_clipboard):
     no_clipboard["files"] = [r"E:\某处\项目资料.zip"]
     assert clipboard_summary() == "1 个文件：项目资料.zip"
+
+
+def test_basename_handles_both_path_separators():
+    """
+    剪贴板里的路径永远是 Windows 形式，但测试可能在 Linux 上跑。
+
+    ``Path(...).name`` 只在 Windows 上认反斜杠（PosixPath 会把整条路径
+    当成一个文件名），所以这里用 PurePosixPath / PureWindowsPath 把两种
+    语义都钉住，避免有人把 _basename 换回 Path(...).name。
+    """
+    import clipboard
+
+    win = r"E:\某处\项目资料.zip"
+    assert clipboard._basename(win) == "项目资料.zip"
+    # 钉住「跨平台」这件事本身：PosixPath 确实做不到，_basename 才能做到
+    assert PurePosixPath(win).name == win
+    assert PureWindowsPath(win).name == "项目资料.zip"
+
+    assert clipboard._basename("E:/某处/项目资料.zip") == "项目资料.zip"
+    assert clipboard._basename("/tmp/pytest-0/项目资料.zip") == "项目资料.zip"
+    assert clipboard._basename("项目资料.zip") == "项目资料.zip"
 
 
 def test_summary_reports_multiple_files(no_clipboard):

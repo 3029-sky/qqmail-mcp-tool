@@ -218,14 +218,19 @@ def test_server_process_reuses_running_server(monkeypatch):
     端口上已有服务器时应直接复用，不要重复启动——
     否则会起第二个进程并因端口占用而崩溃。
     """
-    import email_butler
+    # MCPServerProcess 住在 butler_core。email_butler 只是把它再导出，
+    # 所以打桩必须打在 butler_core 的模块全局上，否则 start() 读不到，
+    # 会去连真的探活地址（8000/health）并真的 Popen 一个子进程。
+    import butler_core
 
-    monkeypatch.setattr(email_butler, "is_server_up", lambda: True)
+    monkeypatch.setattr(butler_core, "is_server_up", lambda: True)
     called = {"popen": 0}
-    monkeypatch.setattr(
-        email_butler.subprocess, "Popen",
-        lambda *a, **k: called.__setitem__("popen", called["popen"] + 1),
-    )
+
+    def fake_popen(*a, **k):
+        called["popen"] += 1
+        raise AssertionError("不应启动新进程")
+
+    monkeypatch.setattr(butler_core.subprocess, "Popen", fake_popen)
 
     proc = MCPServerProcess()
     proc.start()
@@ -237,12 +242,17 @@ def test_server_process_reuses_running_server(monkeypatch):
 
 def test_server_process_stop_is_noop_when_reused(monkeypatch):
     """复用的服务器不归我们管，stop() 不能把它关掉。"""
-    import email_butler
+    import butler_core
 
-    monkeypatch.setattr(email_butler, "is_server_up", lambda: True)
+    monkeypatch.setattr(butler_core, "is_server_up", lambda: True)
+    monkeypatch.setattr(
+        butler_core.subprocess, "Popen",
+        lambda *a, **k: pytest.fail("复用时不应启动新进程"),
+    )
     proc = MCPServerProcess()
     proc.start()
     proc.stop()  # 不应抛异常，也不应有副作用
+    assert proc.reused is True
     assert proc.process is None
 
 

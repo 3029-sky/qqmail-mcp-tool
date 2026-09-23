@@ -187,6 +187,41 @@ def reset_metrics():
     yield
 
 
+@pytest.fixture(autouse=True)
+def server_down_by_default(monkeypatch):
+    """
+    把「8000 端口上没有 MCP 服务器」变成测试的既定前提，而不是碰运气。
+
+    为什么需要这个：``MCPServerProcess.start()`` 第一件事就是探活，探到就
+    走「复用」分支、探不到就走「真的 Popen 一个子进程」分支。以前有两个
+    用例把桩打在了 ``email_butler`` 上（无效），于是它们读的是真实的
+    ``is_server_up()``——开发者本机若恰好有个服务器在跑，用例就走复用分支
+    而通过；CI 上没有服务器，同样的用例就真的去起进程并失败。
+
+    打两层桩，因为有个用例会 ``importlib.reload(butler_core)``：
+      - 直接钉死 ``butler_core.is_server_up``，语义最直白；
+      - 再让 ``httpx.get`` 对探活地址一律连接失败，这样即使模块被 reload
+        （换掉了模块对象、上面的桩失效），探活结果依然是「没有服务器」。
+
+    需要「已有服务器」的用例显式覆盖 ``butler_core.is_server_up`` 即可。
+    """
+    import httpx
+
+    import butler_core
+
+    monkeypatch.setattr(butler_core, "is_server_up", lambda: False)
+
+    real_get = httpx.get
+
+    def no_server(url, *a, **k):
+        if str(url).startswith(butler_core.HEALTH_URL) or str(url).endswith("/health"):
+            raise httpx.ConnectError("测试环境：没有服务器在跑")
+        return real_get(url, *a, **k)
+
+    monkeypatch.setattr(httpx, "get", no_server)
+    yield
+
+
 @pytest.fixture
 def live_sender(fake_smtp):
     """

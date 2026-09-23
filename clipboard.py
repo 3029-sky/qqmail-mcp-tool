@@ -24,6 +24,7 @@
 """
 
 import os
+import re
 import shutil
 import struct
 import time
@@ -270,6 +271,17 @@ def _normalize_ppm_pixels(ppm: bytes) -> List[List[tuple]]:
     return rows
 
 
+def _basename(raw: str) -> str:
+    """
+    从剪贴板拿到的路径里取文件名。
+
+    剪贴板里的路径永远是 Windows 形式（CF_HDROP），而 ``Path(...).name``
+    只在 Windows 上认反斜杠——在 Linux/macOS 上反斜杠不是分隔符，整个
+    路径会被原样返回。所以这里显式两种分隔符都认，与运行平台无关。
+    """
+    return re.split(r"[\\/]", raw)[-1]
+
+
 def _unique_path(directory: Path, name: str) -> Path:
     """避免覆盖同名文件，必要时加序号。"""
     candidate = directory / name
@@ -302,7 +314,7 @@ def clipboard_summary() -> str:
             paths = _read_file_paths(cb)
             if paths:
                 if len(paths) == 1:
-                    return "1 个文件：%s" % Path(paths[0]).name
+                    return "1 个文件：%s" % _basename(paths[0])
                 return "%d 个文件" % len(paths)
 
             dib = _read_dib(cb)
