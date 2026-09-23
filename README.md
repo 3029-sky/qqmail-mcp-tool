@@ -277,6 +277,6 @@ qqmail-mcp-tool/
 | 文档 | 内容 |
 |---|---|
 | **`README.md`** | 本文件 —— 项目总览与上手 |
-| [`DESIGN.md`](DESIGN.md) | 设计决策与 11 条真实缺陷复盘（面试重点） |
+| [`DESIGN.md`](DESIGN.md) | 设计决策与 11 条真实缺陷复盘（技术重点） |
 | [`MANUAL.md`](MANUAL.md) | 使用手册：日常发信、附件、批量、排障 |
-| [`PROJECT.md`](PROJECT.md) | 一页速览（介绍/面试用） |
+| [`PROJECT.md`](PROJECT.md) | 一页速览（快速了解） |

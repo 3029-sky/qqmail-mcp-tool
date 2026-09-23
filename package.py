@@ -1,6 +1,6 @@
 # package.py - 打一个可以交付的源码包
 """
-把项目打成 zip，用于分享给别人（或作为作品集附件）。
+把项目打成 zip，用于分享给别人。
 
     .\\venv\\Scripts\\python.exe package.py
 
