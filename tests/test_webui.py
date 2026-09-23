@@ -587,7 +587,20 @@ async def test_reset_clears_history(client, fake_session):
 
 
 async def test_switch_model_rejects_unknown_model(client, fake_session, monkeypatch):
-    """切到没装的模型要报错，且不能把当前模型改坏。"""
+    """
+    切到没装的模型要报错，且不能把当前模型改坏。
+
+    这里必须打桩 check_model：它对 ollama 分支会真的去连 Ollama，
+    没启动时就先报「无法连接」，根本走不到「模型不存在」这一步。
+    测试要验的是后者的分支，所以把连接这一层替掉。
+    """
+    import butler_core
+
+    monkeypatch.setattr(
+        butler_core, "check_model",
+        lambda ref: None if ref == "ollama:ok:1b" else "Ollama 中找不到模型 %s" % ref,
+    )
+
     resp = await client.post("/api/models", json={"model": "不存在:99b"})
     assert resp.status_code == 400
     assert "不存在:99b" in resp.json()["detail"]
