@@ -64,8 +64,7 @@
 
 ### 终端界面
 
-`python email_butler.py` 或双击 `启动管家.bat`。打印 `⚙ / ↩ / ⏱`，
-适合脚本与无图形环境。
+`python email_butler.py`。打印 `⚙ / ↩ / ⏱`，适合脚本与无图形环境。
 
 **两个界面共用同一套后端**（`butler_core.py`），因此多轮改写等行为
 在两边完全一致——抽出来不是为了分层好看，而是避免两份实现各自漂移。
@@ -129,7 +128,7 @@ SMTP_PASSWORD=16位授权码      # 不是 QQ 登录密码！
 .\venv\Scripts\python.exe email_butler.py    # 终端界面
 ```
 
-或者直接双击 `启动应用.bat` / `启动管家.bat`。
+或者直接双击 `启动应用.bat`。
 
 > ⚠️ **图形界面只监听 `127.0.0.1`。** 它能直接发邮件，不要暴露到局域网。
 
@@ -187,7 +186,7 @@ webui.py / email_butler.py     ← 两个界面
 
 ```
 qqmail-mcp-tool/
-├── 启动应用.bat / 启动管家.bat    # 双击启动（仅含 ASCII，避免中文路径解析问题）
+├── 启动应用.bat            # 双击启动图形界面（仅含 ASCII，避免中文路径解析问题）
 │
 ├── butler_core.py          # 管家后端（两个界面共用：提示词、会话、MCP 生命周期）
 ├── webui.py                # 图形界面（FastAPI + SSE 流式推送）

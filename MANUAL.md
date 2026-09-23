@@ -226,7 +226,7 @@ cd <你克隆项目的目录>\qqmail-mcp-tool
 .\venv\Scripts\python.exe email_butler.py
 ```
 
-也可以双击 `启动管家.bat`。看到这些就可以说话了：
+看到这些就可以说话了：
 
 ```
 · 正在启动 MCP 服务器…
@@ -577,7 +577,7 @@ ollama pull qwen2.5:3b
 
 ```powershell
 cd <你克隆项目的目录>\qqmail-mcp-tool
-.\venv\Scripts\python.exe email_butler.py
+.\venv\Scripts\python.exe webui.py --no-open
 ```
 
 若提示缺依赖：
