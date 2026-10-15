@@ -118,8 +118,7 @@ SMTP_PASSWORD=16位授权码      # 不是 QQ 登录密码！
 
 授权码获取：QQ 邮箱网页版 → 设置 → 账户 → 开启「IMAP/SMTP 服务」→ 生成 16 位授权码。
 
-> **只想跑测试、暂时没有授权码**时用占位配置即可：
-> `copy .env.test .env` 然后跑 pytest。
+
 
 ### 4. 启动
 
@@ -135,15 +134,13 @@ SMTP_PASSWORD=16位授权码      # 不是 QQ 登录密码！
 ### 5.（可选）用 DeepSeek 云端模型
 
 本地 3B 模型在附件名、多轮改写这些地方会出错；DeepSeek 明显更准
-（实测一问 **1.3 秒**，本地 4–10 秒）：
 
 ```bash
 .\venv\Scripts\python.exe -m pip install langchain-openai
 ```
 
 再到 <https://platform.deepseek.com> 申请 API Key，在应用「设置」里填入即可。
-没配 Key 时 DeepSeek 选项也会列出并说明缺什么——能提前说清楚的事，
-不该等到操作失败才说。
+
 
 ---
 
@@ -230,9 +227,7 @@ qqmail-mcp-tool/
 为记录型替身，用 `httpx.ASGITransport` 在进程内驱动真实 MCP 协议栈。
 不联网、不碰真实邮箱、约 20 秒跑完。
 
-几个值得单独看的用例：
-
-| 用例 | 它在防什么 |
+| 用例 |
 |---|---|
 | `test_worker_initialization_is_thread_safe` | 8 并发曾建立 8 条本应唯一的连接 |
 | `test_explicit_directory_does_not_fall_back_to_attachment_dir` | 指了目录却去附件目录搜同名文件 = **发错文件** |
@@ -243,9 +238,9 @@ qqmail-mcp-tool/
 
 ---
 
-## 局限（写清楚，不回避）
+## 局限
 
-| 局限 | 说明 |
+| 局限 |
 |---|---|
 | **QQ 有限流** | 触发后返回 `550 Too many attempts`，需等数小时。别连续快发 |
 | **「发送成功」≠ 对方收到** | 只代表投递到服务器。开 `EMAIL_CONFIRM_DELIVERY` 可多一层证据，但**它也证明不了**对方收到 |
@@ -261,10 +256,7 @@ qqmail-mcp-tool/
 
 ## 安全须知
 
-- **`.env` 绝不入库**。所有读取凭据的位置都集中在 `config.py`，
-  源码中不存在硬编码凭据（由 `tests/test_config.py` 固化）。
 - **不要把授权码贴给任何人或工具**（聊天软件、AI 助手、工单、截图）。
-  「贴出来再删掉」没有用——消息记录里已经有了。
   泄露后到 QQ 邮箱**重新生成**即可，不需要改 QQ 密码。
 - **图形界面只监听 `127.0.0.1`**。
 - **`/mcp` 对外提供服务时必须设置 `MCP_AUTH_TOKEN`**——
